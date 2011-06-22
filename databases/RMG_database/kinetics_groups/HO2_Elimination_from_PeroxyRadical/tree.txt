@@ -11,6 +11,7 @@ L1 : R2OO
 		L3 : R2OO_2H_HNd
 
 		L3 : R2OO_2H_HDe
+			L4: CH3CH(OO)CHCH2
 
 		L3 : R2OO_2H_NdNd
 
@@ -87,4 +88,6 @@ L1 : R2OO
 		L3 : R2OO_DeDe_NdDe
 
 		L3 : R2OO_DeDe_DeDe
+	L2: OCOO
+		L3: HOCH[OO]CH3
 

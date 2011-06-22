@@ -378,31 +378,23 @@ public class TemplateReaction extends Reaction {
 			Kinetics[] p_kinetics, ReactionTemplate p_template, Structure p_structure) {
 		
 		double PT = System.currentTimeMillis();
+		// Look for pre-existing reaction in Template's reactionDictionaryByStructure.
 		TemplateReaction reaction = p_template.getReactionFromStructure(p_structureSp);
 		Global.getReacFromStruc = Global.getReacFromStruc + (System.currentTimeMillis() - PT) / 1000 / 60;
 
-		if (reaction != null){
-			// the same identity of p_structure already exists, clear p_structure to release mem
-			Structure st = reaction.getStructure();
-			if (st != p_structure) {
-				p_structure = null;
-			}
-		}
-		else {
+		if (reaction == null){
 			// Create a new reaction.
 			reaction = new TemplateReaction(p_structureSp, p_kinetics, p_template);
-			// DEBUG: Tell console I made this reaction
-			Logger.info("Created new " + p_template.getName() + " reaction: " + reaction.toString());
 
 			if (reaction.isBackward()) {
-				
+				Logger.info("Created new reverse " + p_template.getName() + " reaction: " + reaction.toString());
 				TemplateReaction reverse = reaction.generateReverseForBackwardReaction(p_structure, p_structureSp);
 				if (reverse == null)
 					return null;
 				reaction.setReverseReaction(reverse);
 			}
 			else {
-				
+				Logger.info("Created new forwards " + p_template.getName() + " reaction: " + reaction.toString());
 				ReactionTemplate fRT = reaction.getReactionTemplate();
 				ReactionTemplate rRT = null;
 

@@ -1514,7 +1514,10 @@ C.D.W divided original rate expression by 3 ( from A= 2.11E+11), to get rate exp
 Verified by Greg Magoon
 **Note that R2 from this paper appears to be missing from the RMG library, so I have added it as 1001**
 
-1001: [100] Jodkowski, J.T.; Rauez, M.-T.; Rayez, J.-C. J. Phys. Chem. A. 1999, 103, 3750.
+----
+1001
+----
+[100] Jodkowski, J.T.; Rauez, M.-T.; Rayez, J.-C. J. Phys. Chem. A. 1999, 103, 3750.
 
 CH3OH + H --> CH2OH + H2 (Rxn. R2 in paper)
 
@@ -3565,7 +3568,7 @@ See notes to 523 for further details.
 
 For CH4 + C2 = CH3 + C2H
 
-J. Phys. Chem. A 2010, 114, 4580–4585
+J. Phys. Chem. A 2010, 114, 4580-4585
 http://dx.doi.org/10.1021/jp1012494
 
 Rate Constants and Kinetic Isotope Effects on the Reaction of C2($X^1\Sigma_g^+$) with CH4 and CD4.
@@ -3614,6 +3617,99 @@ Rxn family nodes: H2O2 + O_rad/OneDe
 The rate coefficient for this node was taken from node 534 (H2O2 + InChI=1/C4H7O/c1-2-3-4-5/h3-4H,2H2,1H3)
 by analogy: HOOH + *O-C=R.  Discussed with MRH.
 
+---
+536
+---
+
+Exact reaction: HOOH + *O-O-CH3 <=> HO-O-CH3 + HOO*
+Rxn family nodes: H2O2 + OOCH3
+
+MHS computed rate coefficient using CBS-QB3 method, see _[MRHCBSQB3RRHO] for general algorithm
+employed.  Two differences::
+	1) the k(T) was calculated from 600 to 2000 K, in 200 K increments.
+	2) Low-frequency torsional modes were treated as 1-d separable hindered rotors.  The scans
+		were performed at the B3LYP/6-31G(d) level.
+
+MHS computed the fitted Arrhenius expression to be: k(T) = 1.84e-1 (T/1K)^3.96 exp(-6.63 kcal mol-1 / RT) cm3 mol-1 s-1.
+The pre-exponential was divided by 2 to get the per-H event.  The uncertainty in the E0
+was estimated to be 2 kcal mol-1 (general accuracy of CBS-QB3 calculations) and the uncertainty
+in the A parameter was MRH guess.
+
+RMG previously estimated the kinetics of the titled reaction to be 1-3 orders of magnitude faster
+than calculations of MHS.
+
+---
+537
+---
+
+Rxn family nodes: H2O2 + O_rad/NonDeO
+
+The rate coefficient for this node was taken from node 536 (H2O2 + OOCH3)
+by analogy: HOOH + *O-O-R.  Discussed with MRH.
+
+---
+538
+---
+MRH CBS-QB3 calculations w/1d hindered rotor corrections
+Exact reaction: CH3CH2CH=CH2 + OOCH3 = HOOCH3 + CH3CHCH=CH2
+
+This reaction was of interest to MRH/MHS because the butanol model was sensitive to its kinetics
+(in particular, the C4H8-1 predicted concentration for 10-atm JSR simulations between 800-1000 K).
+The original mechanism had an estimate that was much faster than these new calculations (the RMG old
+k(T) was 50-100x faster than these calculations between 800-1000 K).
+
+MRH computed these kinetics using the CBS-QB3 method.  Hindered rotor corrections were accounted for in all species:
+	CH3CH2CH=CH2: -CH3 and -CH2CH3 rotor
+	OOCH3: -CH3 rotor
+	TS: -CH3 and -CH=CH2 rotor of react1, -CH3 and -OCH3 of react2, and -OOCH3 between react1 and react2
+	HOOCH3: -CH3 and -OCH3 rotor
+	CH3CHCH=CH2: -CH3 and -CH=CH2 rotor
+External symmetry number of all speces was 1.  k(T) was computed from 600 - 2000 K, in 200 K intervals.  An
+asymmetric Eckart tunneling correction was used.
+
+The computed k(T) was 1.482e-02 * (T/1K)^4.313 * exp(-8.016 kcal/mol / RT) cm3 mol-1 s-1.
+MRH divided the pre-exponential by 2 to account for the reaction path degeneracy.
+
+NOTE: Running PopulateReactions before and after this number produced results that differed by less than a factor
+of three.  New numbers in the RMG database thus lead to an improvement in the RMG estimate (RMG works!).  Also,
+this computed rate coefficient is a factor of 10 faster than Tsang's recommendation for C3H6 + OOCH3 = HOOCH3 + allyl;
+his stated uncertainty is a factor of ten.  However, one would expect abstraction from the secondary carbon of
+1-butane to be faster than the primary carbon of propene, because the C-H bond strength should be weaker.  So,
+this calculation is in reasonable agreement with the literature.
+
+---
+539
+---
+MHS CBS-QB3 calculations w/1d hindered rotor corrections
+Exact reaction: *CH2-CH=CH2 + H2O2 = CH3-CH=CH2 + HO2
+
+MHS computed rate coefficient using CBS-QB3 method, see _[MRHCBSQB3RRHO] for general algorithm
+employed.  Two differences::
+	1) the k(T) was calculated from 600 to 2000 K, in 200 K increments.
+	2) Low-frequency torsional modes were treated as 1-d separable hindered rotors.  The scans
+		were performed at the B3LYP/6-31G(d) level.
+
+MHS computed the fitted Arrhenius expression to be: k(T) = 3.51e-2 (T/1K)^4.22 exp(-9.86 kcal mol-1 / RT) cm3 mol-1 s-1.
+The pre-exponential was divided by 2 to get the per-H event.  The uncertainty in the E0
+was estimated to be 2 kcal mol-1 (general accuracy of CBS-QB3 calculations) and the uncertainty
+in the A parameter was MRH guess.
+
+RMG previously estimated the kinetics of the titled reaction to be ~2 orders of magnitude faster
+than calculations of MHS.
+
+---
+540
+---
+MHS CBS-QB3 calculations without 1d hindered rotor correction (due to presence of hydrogen bond interactions)
+Exact reaction: HO2 + CH3-CH2-CH2-CH=O = H2O2 + CH3-CH2-CH2-C*=O
+
+MHS computed rate coefficient using CBS-QB3 method, see _[MRHCBSQB3RRHO] for general algorithm
+employed.  With the difference that the k(T) was calculated from 600 to 2000 K, in 200 K increments.
+
+MHS computed the fitted Arrhenius expression to be: k(T) = 1.91e-4 (T/1K)^4.25 exp(-0.81 kcal mol-1 / RT) cm3 mol-1 s-1.
+The uncertainty in the E0 was estimated to be 2 kcal mol-1 (general accuracy of CBS-QB3 calculations) and the uncertainty
+in the A parameter was MRH guess.
+
 ----------
 References
 ----------
@@ -3626,4 +3722,3 @@ temperatures used were: 300, 331, 370, 419, 482, 568, 692, 885, 1227, 2000 (even
 .. [Tsang1990] W. Tsang; "Chemical kinetic database for combustion chemistry. Part IV. Isobutane" J. Phys. Chem. Ref. Data 19 (1990) 1-68
 
 .. [Tsang1991] W. Tsang; "Chemical kinetic database for combustion chemistry. Part V. Propene" J. Phys. Chem. Ref. Data 20 (1991) 221-273
-
