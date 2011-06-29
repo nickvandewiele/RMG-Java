@@ -33,10 +33,13 @@ public class QMInputWriter {
 		if (keywords != null) return keywords;
 		else return null;
 	}
-	public QMInputWriter(String name, String directory, molFile p_molfile,
-			int attemptNumber, int multiplicity) {
+	public QMInputWriter(String name, String directory){
 		this.name = name;
 		this.dir = directory;
+	}
+	public QMInputWriter(String name, String directory, molFile p_molfile,
+			int attemptNumber, int multiplicity) {
+		this(name, directory);
 		this.molfile = p_molfile;
 		this.attemptNumber = attemptNumber;
 		this.multiplicity = multiplicity;
