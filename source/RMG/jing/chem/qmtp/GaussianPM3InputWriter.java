@@ -35,7 +35,7 @@ public class GaussianPM3InputWriter extends QMInputWriter implements QMInputWrit
 	}
 
 	public File write() {
-		Map<String, String> inputKeywords = createKeywords();
+		createKeywords();
 
 		File inputFile = createInputFile();
 		
