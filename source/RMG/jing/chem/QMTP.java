@@ -37,7 +37,9 @@ import jing.chem.qmtp.CanThermJob;
 import jing.chem.qmtp.GaussianJob;
 import jing.chem.qmtp.GaussianPM3InputWriter;
 import jing.chem.qmtp.GaussianPM3Parser;
+import jing.chem.qmtp.MM4HRInputWriter;
 import jing.chem.qmtp.MM4HRJob;
+import jing.chem.qmtp.MM4InputWriter;
 import jing.chem.qmtp.MM4Job;
 import jing.chem.qmtp.MM4Parser;
 import jing.chem.qmtp.MOPACJob;
@@ -582,7 +584,7 @@ public class QMTP implements GeneralGAPP {
 	//the function returns the maximum number of keywords that can be attempted; this will be the same throughout the evaluation of the code, so it may be more appropriate to have this as a "constant" attribute of some sort
 	public int createMM4Input(String name, String directory, molFile p_molfile, int attemptNumber, String InChIaug, int multiplicity){
 		//write a file with the input keywords
-		QMInputWritable writer = new GaussianPM3InputWriter(name, directory, p_molfile, attemptNumber, multiplicity, InChIaug);
+		QMInputWritable writer = new MM4InputWriter(name, directory, p_molfile, attemptNumber, multiplicity, InChIaug);
 
 		File inputFile = writer.write();
 
@@ -592,123 +594,15 @@ public class QMTP implements GeneralGAPP {
 	//creates MM4 rotor input file and MM4 batch file in directory with filenames name.mm4roti and name.comi, respectively
 	//the function returns the set of rotor dihedral angles for the minimum energy conformation
 	public double[] createMM4RotorInput(String name, String directory, ChemGraph p_chemgraph, int rotors){
-		//read in the optimized coordinates from the completed "normal" MM4 job; this will be used as a template for the rotor input files
-		String mm4optContents = "";
-		int indexForFirstAtom=-1;
-		int lineIndex=0;
-		double[] dihedralMinima = new double[rotors];
-		try{
-			FileReader mm4opt = new FileReader(directory+"/"+name+".mm4opt");
-			BufferedReader reader = new BufferedReader(mm4opt);
-			String line=reader.readLine();
-			while(line!=null){
-				if(indexForFirstAtom<0 && line.length()>=40 && line.substring(35,40).equals("(  1)")) indexForFirstAtom=lineIndex;//store the location of the first atom coordinate
-				mm4optContents+=line+"\n";
-				line=reader.readLine();
-				lineIndex++;
-			}
-			reader.close();
-			mm4opt.close();
-		}
-		catch(Exception e){
-			String err = "Error in reading .mm4opt file\n";
-			err += e.toString();
-			Logger.logStackTrace(e);
-			System.exit(0);
-		}
-		String[] lines = mm4optContents.split("[\\r?\\n]+");//split by newlines, excluding blank lines; cf. http://stackoverflow.com/questions/454908/split-java-string-by-new-line
-		int flag = 0;//flag to indicate whether there is a "line 1a" with pi system information
-		if (lines[1].startsWith("T")||lines[1].startsWith("F")) flag = 1;//pi system information is indicated by the second line beginning with T's and potentially F's
-		lines[1+flag]=lines[1+flag].substring(0,78)+" 2";//take the first 78 characters of line 2 (or 3 if it is a pi-system compound), and append the option number for the NDRIVE option; in other words, we are replacing the NDRIVE=0 option with the desired option number
-		//reconstruct mm4optContents
-		mm4optContents = "";
-		for(int j=0; j<lines.length;j++){
-			mm4optContents +=lines[j]+"\n";
-		}
-		//iterate over all the rotors in the molecule
-		int i = 0;//rotor index
-		LinkedHashMap rotorInfo = p_chemgraph.getInternalRotorInformation();
-		Iterator iter = rotorInfo.keySet().iterator();
-		while(iter.hasNext()){
-			i++;
-			int[] rotorAtoms = (int[])iter.next();
-			try{
-				//write one script file for each rotor
-				//Step 1: write the script for MM4 batch operation
-				//	Example script file:
-				//	#! /bin/csh
-				//	cp testEthylene.mm4 CPD.MM4
-				//	cp $MM4_DATDIR/BLANK.DAT PARA.MM4
-				//	cp $MM4_DATDIR/CONST.MM4 .
-				//	$MM4_EXEDIR/mm4 <<%
-				//	1
-				//	2
-				//	0
-				//	%
-				//	mv TAPE4.MM4 testEthyleneBatch.out
-				//	mv TAPE9.MM4 testEthyleneBatch.opt
-				//	exit
-				//create batch file with executable permissions: cf. http://java.sun.com/docs/books/tutorial/essential/io/fileAttr.html#posix
-				File inpKey = new File(directory+"/"+name+".com"+i);
-				String inpKeyStr="#! /bin/csh\n";
-				inpKeyStr+="cp "+name+".mm4rot"+i+" CPD.MM4\n";
-				inpKeyStr+="cp $MM4_DATDIR/BLANK.DAT PARA.MM4\n";
-				inpKeyStr+="cp $MM4_DATDIR/CONST.MM4 .\n";
-				inpKeyStr+="$MM4_EXEDIR/mm4 <<%\n";
-				inpKeyStr+="1\n";//read from first line of .mm4 file
-				inpKeyStr+="3\n"; //Full-Matrix Method only
-				//inpKeyStr+="2\n"; //Block-Diagonal Method then Full-Matrix Method
-
-				inpKeyStr+="0\n";//terminate the job
-				inpKeyStr+="%\n";
-				inpKeyStr+="mv TAPE4.MM4 "+name+".mm4rotout"+i+"\n";
-				inpKeyStr+="mv TAPE9.MM4 "+name+".mm4rotopt"+i+"\n";
-				inpKeyStr+="exit\n";
-				FileWriter fw = new FileWriter(inpKey);
-				fw.write(inpKeyStr);
-				fw.close();
-			}
-			catch(Exception e){
-				String err = "Error in writing MM4 script files\n";
-				err += e.toString();
-				Logger.logStackTrace(e);
-				System.exit(0);
-			}
-
-			//Step 2: create the MM4 rotor job input file for rotor i, using the output file from the "normal" MM4 job as a template
-			//Step 2a: find the dihedral angle for the minimized conformation (we need to start at the minimum energy conformation because CanTherm assumes that theta=0 is the minimum
-			//extract the lines for dihedral atoms
-			String dihedral1s = lines[indexForFirstAtom+rotorAtoms[0]-1];
-			String atom1s = lines[indexForFirstAtom+rotorAtoms[1]-1];
-			String atom2s = lines[indexForFirstAtom+rotorAtoms[2]-1];
-			String dihedral2s = lines[indexForFirstAtom+rotorAtoms[3]-1];
-			//extract the x,y,z coordinates for each atom
-			double[] dihedral1 = {Double.parseDouble(dihedral1s.substring(0,10)),Double.parseDouble(dihedral1s.substring(10,20)),Double.parseDouble(dihedral1s.substring(20,30))};
-			double[] atom1 = {Double.parseDouble(atom1s.substring(0,10)),Double.parseDouble(atom1s.substring(10,20)),Double.parseDouble(atom1s.substring(20,30))};
-			double[] atom2 = {Double.parseDouble(atom2s.substring(0,10)),Double.parseDouble(atom2s.substring(10,20)),Double.parseDouble(atom2s.substring(20,30))};
-			double[] dihedral2 = {Double.parseDouble(dihedral2s.substring(0,10)),Double.parseDouble(dihedral2s.substring(10,20)),Double.parseDouble(dihedral2s.substring(20,30))};
-			//determine the dihedral angle
-			dihedralMinima[i-1] = calculateDihedral(dihedral1,atom1,atom2,dihedral2);
-			//double dihedral = calculateDihedral(dihedral1,atom1,atom2,dihedral2);
-			//if (dihedral < 0) dihedral = dihedral + 360;//make sure dihedral is positive; this will save an extra character in the limited space for specifying starting and ending angles
-			//eventually, when problems arise due to collinear atoms (both arguments to atan2 are zero) we can iterate over other atom combinations (with atoms in each piece determined by the corresponding value in rotorInfo for atom2 and the complement of these (full set = p_chemgraph.getNodeIDs()) for atom1) until they are not collinear
-
-			//Step 2b: write the file for rotor i
-			try{
-				FileWriter mm4roti = new FileWriter(directory+"/"+name+".mm4rot"+i);
-				//mm4roti.write(mm4optContents+"\n"+String.format("  %3d  %3d  %3d  %3d     %5.1f%5.1f%5.1f", rotorAtoms[0],rotorAtoms[1],rotorAtoms[2],rotorAtoms[3], dihedral, dihedral + 360.0 - deltaTheta, deltaTheta)+"\n");//deltaTheta should be less than 100 degrees so that dihedral-deltaTheta still fits
-				//mm4roti.write(mm4optContents+"\n"+String.format("  %3d  %3d  %3d  %3d     %5.1f%5.1f%5.1f", rotorAtoms[0],rotorAtoms[1],rotorAtoms[2],rotorAtoms[3], dihedral, dihedral - deltaTheta, deltaTheta)+"\n");//deltaTheta should be less than 100 degrees so that dihedral-deltaTheta still fits
-				mm4roti.write(mm4optContents+String.format("  %3d  %3d  %3d  %3d     %5.1f%5.1f%5.1f", rotorAtoms[0],rotorAtoms[1],rotorAtoms[2],rotorAtoms[3], 0.0, 360.0-deltaTheta, deltaTheta)+"\n");//M1, M2, M3, M4, START, FINISH, DIFF (as described in MM4 manual); //this would require miminum to be stored and used to adjust actual angles before sending to CanTherm
-				mm4roti.close();
-			}
-			catch(Exception e){
-				String err = "Error in writing MM4 rotor input file\n";
-				err += e.toString();
-				Logger.logStackTrace(e);
-				System.exit(0);
-			}
-		}
-		return dihedralMinima;
+		/*
+		 * TODO should we include getter method of dihedral minima in interface QMInputWritable?
+		 * don't think so...
+		 * 
+		 *  so for now, the implementation is used instead of the interface
+		 */
+		MM4HRInputWriter writer = new MM4HRInputWriter(name, directory, p_chemgraph, rotors);
+		writer.write();
+		return writer.getDihedralMinima();
 	}
 
 	//given x,y,z (cartesian) coordinates for dihedral1 atom, (rotor) atom 1, (rotor) atom 2, and dihedral2 atom, calculates the dihedral angle (in degrees, between +180 and -180) using the atan2 formula at http://en.wikipedia.org/w/index.php?title=Dihedral_angle&oldid=373614697
