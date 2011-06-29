@@ -63,6 +63,7 @@ public class CCLibData implements IQMData{
 	 */
 	Double[] rotationalConstants = new Double[3];
 	
+	Double stericEnergy;
 	
 	public CCLibData(){
 		atomicNumbers = new ArrayList<Integer>();
@@ -135,5 +136,13 @@ public class CCLibData implements IQMData{
 
 	public void setRotationalConstants(Double[] rotationalConstants) {
 		this.rotationalConstants = rotationalConstants;
+	}
+
+	public Double getStericEnergy() {
+		return stericEnergy;
+	}
+
+	public void setStericEnergy(Double stericEnergy) {
+		this.stericEnergy = stericEnergy;
 	}
 }

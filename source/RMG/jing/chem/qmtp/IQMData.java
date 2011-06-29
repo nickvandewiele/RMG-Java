@@ -55,4 +55,7 @@ public interface IQMData {
 	public void setGroundStateDegeneracy(Integer groundStateDegeneracy) ;
 
 	public void setRotationalConstants(Double[] rotationalConstants) ;
+	
+	public Double getStericEnergy() ;
+	public void setStericEnergy(Double stericEnergy);
 }

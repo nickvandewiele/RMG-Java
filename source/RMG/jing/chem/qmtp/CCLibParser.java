@@ -10,11 +10,16 @@ import jing.rxnSys.Logger;
 
 public class CCLibParser implements IParsingTool{
 
+	Boolean flagStericEnergy;
+	
 	public CCLibParser(){
-
+		flagStericEnergy = false;
+	}
+	public CCLibParser(boolean stericEnergy){
+		this.flagStericEnergy = stericEnergy;
 	}
 
-	public IQMData parse(Process job, ChemGraph chemGraph, boolean printStericEnergy){
+	public IQMData parse(Process job, ChemGraph chemGraph){
 		IQMData data = new CCLibData();
 		try{
 			//parse the Mopac file using cclib
@@ -119,6 +124,11 @@ public class CCLibParser implements IParsingTool{
 			energy = Double.parseDouble(br.readLine());//read next line: energy
 			data.setEnergy(new Double(energy));
 
+			if(flagStericEnergy){
+				//read next line: steric energy (in Hartree)
+				double stericEnergy = Double.parseDouble(br.readLine());
+				data.setStericEnergy(stericEnergy);
+			}
 			molmass = Double.parseDouble(br.readLine());//read next line: molecular mass (in amu)
 			data.setMolecularMass(new Double(molmass));
 

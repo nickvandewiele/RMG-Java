@@ -15,6 +15,6 @@ import jing.chem.ChemGraph;
  */
 public interface IParsingTool {
 
-	public IQMData parse(Process job, ChemGraph p_chemGraph, boolean printStericEnergy);
+	public IQMData parse(Process job, ChemGraph p_chemGraph);
 
 }
