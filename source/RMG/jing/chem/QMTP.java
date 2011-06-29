@@ -33,7 +33,9 @@ package jing.chem;
 
 import java.util.*;
 
+import jing.chem.qmtp.CanThermInputWriter;
 import jing.chem.qmtp.CanThermJob;
+import jing.chem.qmtp.CanThermParser;
 import jing.chem.qmtp.GaussianJob;
 import jing.chem.qmtp.GaussianPM3InputWriter;
 import jing.chem.qmtp.GaussianPM3Parser;
@@ -54,6 +56,7 @@ import jing.chem.qmtp.QMJob;
 import jing.chem.qmtp.QMJobRunnable;
 import jing.chem.qmtp.QMParsable;
 import jing.chem.qmtp.QMParser;
+import jing.chem.qmtp.ThreeDMolFileCreator;
 import jing.chemUtil.*;
 import jing.param.*;
 
@@ -271,7 +274,8 @@ public class QMTP implements GeneralGAPP {
 			boolean mopacResultExists = successfulMopacResultExistsQ(name,directory,InChIaug);
 			if(!gaussianResultExists && !mopacResultExists){//if a successful result doesn't exist from previous run (or from this run), run the calculation; if a successful result exists, we will skip directly to parsing the file
 				//steps 1 and 2: create 2D and 3D mole files
-				molFile p_3dfile = create3Dmolfile(name, p_chemGraph);
+				ThreeDMolFileCreator creator = new ThreeDMolFileCreator(name, p_chemGraph);
+				molFile p_3dfile = creator.create();
 				//3. create the Gaussian or MOPAC input file
 				directory = qmfolder;
 				dir=new File(directory);
@@ -290,11 +294,24 @@ public class QMTP implements GeneralGAPP {
 							maxAttemptNumber = createGaussianPM3Input(name, directory, p_3dfile, -1, InChIaug, multiplicity);//use -1 for attemptNumber for monoatomic case
 						}
 						//4. run Gaussian
-						successFlag = runGaussian(name, directory);
+						/*
+						 * name and directory are the name and directory for the input (and output) file;
+						 * input is assumed to be preexisting and have the .gjf suffix
+						 * returns an integer indicating success or failure of the Gaussian calculation: 1 for success, 0 for failure;
+						 */
+						QMJobRunnable gaussianJob = new GaussianJob(name, directory);
+						successFlag = gaussianJob.run();
 					}
 					else if (qmProgram.equals("mopac") || qmProgram.equals("both")){
 						maxAttemptNumber = createMopacPM3Input(name, directory, p_3dfile, attemptNumber, InChIaug, multiplicity);
-						successFlag = runMOPAC(name, directory);
+						/*
+						 * name and directory are the name and directory for the input (and output) file;
+						 * input is assumed to be preexisting and have the .mop suffix
+						 * returns an integer indicating success or failure of the MOPAC calculation: 1 for success, 0 for failure;
+						 * this function is based on the Gaussian analogue
+						 */
+						QMJobRunnable job = new MOPACJob(name, directory); 
+						successFlag = job.run();
 					}
 					else{
 						Logger.critical("Unsupported quantum chemistry program");
@@ -330,7 +347,13 @@ public class QMTP implements GeneralGAPP {
 			}
 			//5. parse QM output and record as thermo data (function includes symmetry/point group calcs, etc.); if both Gaussian and MOPAC results exist, Gaussian result is used
 			if (gaussianResultExists || (qmProgram.equals("gaussian03") && !mopacResultExists)){
-				result = parseGaussianPM3(name, directory, p_chemGraph);
+				//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the Gaussian .log file
+				//may want to split this into several functions
+				QMParsable parser = new GaussianPM3Parser(name, directory, p_chemGraph);
+				result = parser.parse();
+				result.setSource("Gaussian PM3 calculation");
+				Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
+				
 			}
 			else if (mopacResultExists || qmProgram.equals("mopac") || qmProgram.equals("both")){
 				result = parseMopacPM3(name, directory, p_chemGraph);
@@ -345,7 +368,8 @@ public class QMTP implements GeneralGAPP {
 			boolean mm4ResultExists = successfulMM4ResultExistsQ(name,directory,InChIaug);
 			if(!mm4ResultExists){//if a successful result doesn't exist from previous run (or from this run), run the calculation; if a successful result exists, we will skip directly to parsing the file
 				//steps 1 and 2: create 2D and 3D mole files
-				molFile p_3dfile = create3Dmolfile(name, p_chemGraph);
+				ThreeDMolFileCreator creator = new ThreeDMolFileCreator(name, p_chemGraph);
+				molFile p_3dfile = creator.create();
 				//3. create the MM4 input file
 				directory = qmfolder;
 				dir=new File(directory);
@@ -357,7 +381,11 @@ public class QMTP implements GeneralGAPP {
 				while(successFlag==0 && attemptNumber <= maxAttemptNumber){
 					maxAttemptNumber = createMM4Input(name, directory, p_3dfile, attemptNumber, InChIaug, multiplicity);
 					//4. run MM4
-					successFlag = runMM4(name, directory);
+					//name and directory are the name and directory for the input (and output) file;
+					//input script is assumed to be preexisting and have the .com suffix
+					//returns an integer indicating success or failure of the calculation: 1 for success, 0 for failure
+					QMJobRunnable mm4Job = new MM4Job(name, directory);
+					successFlag = mm4Job.run();
 					//new IF block to check success
 					if(successFlag==1){
 						Logger.info("Attempt #"+attemptNumber + " on species " + name + " ("+InChIaug+") succeeded.");
@@ -367,7 +395,20 @@ public class QMTP implements GeneralGAPP {
 							//we should re-run scans even if pre-existing scans exist because atom numbering may change from case to case; a better solution would be to check for stored CanTherm output and use that if available
 							Logger.info("Running rotor scans on "+name+"...");
 							dihedralMinima = createMM4RotorInput(name, directory, p_chemGraph, rotors);//we don't worry about checking InChI here; if there is an InChI mismatch it should be caught
-							runMM4Rotor(name, directory, rotors);
+							//name and directory are the name and directory for the input (and output) file;
+							//input script is assumed to be preexisting and have the .comi suffix where i is a number between 1 and rotors
+							for(int j=1;j<=rotors;j++){
+
+								/**
+								 * TODO for now, name for MM4HR job also contains some 
+								 * input file extension and index j...
+								 * 
+								 * should be modified in the future!
+								 */
+								name = name+".com"+j;
+								QMJobRunnable job = new MM4HRJob(name, directory);
+								job.run();
+							}
 						}
 					}
 					else if(successFlag==0){
@@ -387,14 +428,17 @@ public class QMTP implements GeneralGAPP {
 					performCanThermCalcs(name, directory, p_chemGraph, dihedralMinima, false);
 					if (p_chemGraph.getInternalRotor()>0) performCanThermCalcs(name, directory, p_chemGraph, dihedralMinima, true);//calculate RRHO case for comparison
 				}
-
 			}
 			//5. parse MM4 output and record as thermo data (function includes symmetry/point group calcs, etc.)
 			if(!useCanTherm) result = parseMM4(name, directory, p_chemGraph);
 			else{
 				//if (qmdata==null) qmdata = getQMDataWithCClib(name, directory, p_chemGraph, true);//get qmdata if it is null (i.e. if a pre-existing successful result exists and it wasn't read in above)
-				result = parseCanThermFile(name, directory, p_chemGraph);
-				if (p_chemGraph.getInternalRotor()>0) parseCanThermFile(name+"_RRHO", directory, p_chemGraph);//print the RRHO result for comparison
+				CanThermParser canthermParser = new CanThermParser(name, directory, p_chemGraph);
+				result = canthermParser.parse();
+				if (p_chemGraph.getInternalRotor()>0) {
+					//print the RRHO result for comparison
+					canthermParser = new CanThermParser(name+"_RRHO", directory, p_chemGraph);
+				}
 			}
 		}
 
@@ -410,158 +454,6 @@ public class QMTP implements GeneralGAPP {
 
 		primaryLibrary = PrimaryThermoLibrary.getINSTANCE();
 
-	}
-
-	//creates a 3D molFile; for monoatomic species, it just returns the 2D molFile
-	public molFile create3Dmolfile(String name, ChemGraph p_chemGraph){
-		//1. create a 2D file
-		//use the absolute path for directory, so we can easily reference from other directories in command-line paths
-		//can't use RMG.workingDirectory, since this basically holds the RMG environment variable, not the workingDirectory
-		String directory = "2Dmolfiles/";
-		File dir=new File(directory);
-		directory = dir.getAbsolutePath();
-		molFile p_2dfile = new molFile(name, directory, p_chemGraph);
-		molFile p_3dfile = new molFile();//it seems this must be initialized, so we initialize to empty object
-		//2. convert from 2D to 3D using RDKit if the 2D molfile is for a molecule with 2 or more atoms
-		int atoms = p_chemGraph.getAtomNumber();
-		if(atoms > 1){
-			int distGeomAttempts=1;
-			if(atoms > 3){//this check prevents the number of attempts from being negative
-				distGeomAttempts = 5*(p_chemGraph.getAtomNumber()-3); //number of conformer attempts is just a linear scaling with molecule size, due to time considerations; in practice, it is probably more like 3^(n-3) or something like that
-			}
-			p_3dfile = embed3D(p_2dfile, distGeomAttempts);
-			return p_3dfile;
-		}
-		else{
-			return p_2dfile;
-		}
-
-
-	}
-	//embed a molecule in 3D, using RDKit
-	public molFile embed3D(molFile twoDmolFile, int numConfAttempts){
-		//convert to 3D MOL file using RDKit script
-		int flag=0;
-		String directory = "3Dmolfiles/";
-		File dir=new File(directory);
-		directory = dir.getAbsolutePath();//this uses the absolute path for the directory
-		String name = twoDmolFile.getName();
-		try{   
-			File runningdir=new File(directory);
-			String command="";
-			if (System.getProperty("os.name").toLowerCase().contains("windows")){//special windows case where paths can have spaces and are allowed to be surrounded by quotes
-				command = "python \""+System.getProperty("RMG.workingDirectory")+"/scripts/distGeomScriptMolLowestEnergyConf.py\" ";
-				String twoDmolpath=twoDmolFile.getPath();
-				command=command.concat("\""+twoDmolpath+"\" ");
-				command=command.concat("\""+name+".mol\" ");//this is the target file name; use the same name as the twoDmolFile (but it will be in he 3Dmolfiles folder
-				command=command.concat("\""+name+".cmol\" ");//this is the target file name for crude coordinates (corresponding to the minimum energy conformation based on UFF refinement); use the same name as the twoDmolFile (but it will be in he 3Dmolfiles folder) and have suffix .cmol
-				command=command.concat(numConfAttempts + " ");
-				command=command.concat("\"" + System.getenv("RDBASE")+"\"");//pass the $RDBASE environment variable to the script so it can use the approprate directory when importing rdkit
-			}    
-			else{//non-Windows case
-				command = "python "+System.getProperty("RMG.workingDirectory")+"/scripts/distGeomScriptMolLowestEnergyConf.py ";
-				String twoDmolpath=twoDmolFile.getPath();
-				command=command.concat(""+twoDmolpath+" ");
-				command=command.concat(name+".mol ");//this is the target file name; use the same name as the twoDmolFile (but it will be in he 3Dmolfiles folder
-				command=command.concat(name+".cmol ");//this is the target file name for crude coordinates (corresponding to the minimum energy conformation based on UFF refinement); use the same name as the twoDmolFile (but it will be in he 3Dmolfiles folder) and have suffix .cmol
-				command=command.concat(numConfAttempts + " ");
-				command=command.concat(System.getenv("RDBASE"));//pass the $RDBASE environment variable to the script so it can use the approprate directory when importing rdkit
-			}
-			Process pythonProc = Runtime.getRuntime().exec(command, null, runningdir);
-			String killmsg= "Python process for "+twoDmolFile.getName()+" did not complete within 120 seconds, and the process was killed. File was probably not written.";//message to print if the process times out
-			//check for errors and display the error if there is one
-			InputStream is = pythonProc.getErrorStream();
-			InputStreamReader isr = new InputStreamReader(is);
-			BufferedReader br = new BufferedReader(isr);
-			String line=null;
-			while ( (line = br.readLine()) != null) {
-				line = line.trim();
-				Logger.error(line);
-				flag=1;
-			}
-			//if there was an error, indicate the file and InChI
-			if(flag==1){
-				Logger.info("RDKit received error (see above) on " + twoDmolFile.getName()+". File was probably not written.");
-			}
-			int exitValue = pythonProc.waitFor();
-			pythonProc.getInputStream().close();
-			pythonProc.getOutputStream().close();
-			br.close();
-			isr.close();
-			is.close();
-		}
-		catch (Exception e) {
-			Logger.logStackTrace(e);
-			String err = "Error in running RDKit Python process \n";
-			err += e.toString();
-			Logger.critical(err);
-			System.exit(0);
-		}
-
-
-
-		// gmagoon 6/3/09 comment out InChI checking for now; in any case, the code will need to be updated, as it is copied from my testing code
-		//        //check whether the original InChI is reproduced
-		//        if(flag==0){
-		//            try{
-		//                File f=new File("c:/Python25/"+molfilename);
-		//                File newFile= new File("c:/Python25/mol3d.mol");
-		//                if(newFile.exists()){
-		//                    newFile.delete();//apparently renaming will not work unless target file does not exist (at least on Vista)
-		//                }
-		//                f.renameTo(newFile);
-		//                String command = "c:/Users/User1/Documents/InChI-1/cInChI-1.exe c:/Python25/mol3d.mol inchi3d.inchi /AuxNone /DoNotAddH";//DoNotAddH used to prevent adding Hs to radicals (this would be a problem for current RDKit output which doesn't use M RAD notation)
-		//                Process inchiProc = Runtime.getRuntime().exec(command);	
-		//               // int exitValue = inchiProc.waitFor();
-		//                Thread.sleep(200);//****update: can probably eliminate this using buffered reader
-		//                inchiProc.destroy();
-		//                
-		//                //read output file
-		//                File outputFile = new File("inchi3d.inchi");
-		//                FileReader fr = new FileReader(outputFile);
-		//                BufferedReader br = new BufferedReader(fr);
-		//        	String line=null;
-		//                String inchi3d=null;
-		//                while ( (line = br.readLine()) != null) {
-		//                        line = line.trim();
-		//                        if(line.startsWith("InChI="))
-		//                        {
-		//                            inchi3d=line;
-		//                        }
-		//                }
-		//                fr.close();
-		//                
-		//                //return file to original name:
-		//                File f2=new File("c:/Python25/mol3d.mol");
-		//                File newFile2= new File("c:/Python25/"+molfilename);
-		//                if(newFile2.exists()){
-		//                    newFile2.delete();
-		//                }
-		//                f2.renameTo(newFile2);
-		//                
-		//                //compare inchi3d with input inchi and print a message if they don't match
-		//                if(!inchi3d.equals(inchiString)){
-		//                    if(inchi3d.startsWith(inchiString)&&inchiString.length()>10){//second condition ensures 1/C does not match 1/CH4; 6 characters for InChI=, 2 characters for 1/, 2 characters for atom layer
-		//                        Logger.info("(probably minor) For File: "+ molfilename+" , 3D InChI (" + inchi3d+") begins with, but does not match original InChI ("+inchiString+"). SMILES string: "+ smilesString);
-		//                        
-		//                    }
-		//                    else{
-		//                        Logger.info("For File: "+ molfilename+" , 3D InChI (" + inchi3d+") does not match original InChI ("+inchiString+"). SMILES string: "+ smilesString);
-		//                    }
-		//                }
-		//            }
-		//            catch (Exception e) {
-		//					Logger.logStackTrace(e);
-		//                String err = "Error in running InChI process \n";
-		//                err += e.toString();
-		//                Logger.critical(err);
-		//                System.exit(0);
-		//            }
-		//        }
-
-
-		//construct molFile pointer to new file (name will be same as 2D mol file
-		return new molFile(name, directory);
 	}
 
 	/**
@@ -613,26 +505,6 @@ public class QMTP implements GeneralGAPP {
 		return writer.getDihedralMinima();
 	}
 
-	//given x,y,z (cartesian) coordinates for dihedral1 atom, (rotor) atom 1, (rotor) atom 2, and dihedral2 atom, calculates the dihedral angle (in degrees, between +180 and -180) using the atan2 formula at http://en.wikipedia.org/w/index.php?title=Dihedral_angle&oldid=373614697
-	public double calculateDihedral(double[] dihedral1, double[] atom1, double[] atom2, double[] dihedral2){
-		//calculate the vectors between the atoms
-		double[] b1 = {atom1[0]-dihedral1[0], atom1[1]-dihedral1[1], atom1[2]-dihedral1[2]};
-		double[] b2 = {atom2[0]-atom1[0], atom2[1]-atom1[1], atom2[2]-atom1[2]};
-		double[] b3 = {dihedral2[0]-atom2[0], dihedral2[1]-atom2[1], dihedral2[2]-atom2[2]};
-		//calculate norm of b2
-		double normb2 = Math.sqrt(b2[0]*b2[0]+b2[1]*b2[1]+b2[2]*b2[2]);
-		//calculate necessary cross products
-		double[] b1xb2 = {b1[1]*b2[2]-b1[2]*b2[1], b2[0]*b1[2]-b1[0]*b2[2], b1[0]*b2[1]-b1[1]*b2[0]};
-		double[] b2xb3 = {b2[1]*b3[2]-b2[2]*b3[1], b3[0]*b2[2]-b2[0]*b3[2], b2[0]*b3[1]-b2[1]*b3[0]};
-		//compute arguments for atan2 function (includes dot products)
-		double y = normb2*(b1[0]*b2xb3[0]+b1[1]*b2xb3[1]+b1[2]*b2xb3[2]);//|b2|*b1.(b2xb3)
-		double x = b1xb2[0]*b2xb3[0]+b1xb2[1]*b2xb3[1]+b1xb2[2]*b2xb3[2];//(b1xb2).(b2xb3)
-		double dihedral = Math.atan2(y, x);
-		//return dihedral*180.0/Math.PI;//converts from radians to degrees
-		return Math.toDegrees(dihedral);//converts from radians to degrees
-	}
-
-
 	/**
 	 * creates MOPAC PM3 input file in directory with filename name.mop by using OpenBabel to convert p_molfile
 	 * attemptNumber determines which keywords to try
@@ -658,61 +530,6 @@ public class QMTP implements GeneralGAPP {
 	}
 
 
-	/**
-	 * name and directory are the name and directory for the input (and output) file;
-	 * input is assumed to be preexisting and have the .gjf suffix
-	 * returns an integer indicating success or failure of the Gaussian calculation: 1 for success, 0 for failure;
-	 */
-	public int runGaussian(String name, String directory){
-
-		QMJobRunnable gaussianJob = new GaussianJob(name, directory);
-		return gaussianJob.run();
-
-	}
-
-	//name and directory are the name and directory for the input (and output) file;
-	//input script is assumed to be preexisting and have the .com suffix
-	//returns an integer indicating success or failure of the calculation: 1 for success, 0 for failure
-	public int runMM4(String name, String directory){
-
-		QMJobRunnable mm4Job = new MM4Job(name, directory);
-		return mm4Job.run();
-
-	}
-
-	//name and directory are the name and directory for the input (and output) file;
-	//input script is assumed to be preexisting and have the .comi suffix where i is a number between 1 and rotors
-	public void runMM4Rotor(String name, String directory, int rotors){
-		for(int j=1;j<=rotors;j++){
-
-			/**
-			 * TODO for now, name for MM4HR job also contains some 
-			 * input file extension and index j...
-			 * 
-			 * should be modified in the future!
-			 */
-			name = name+".com"+j;
-			QMJobRunnable job = new MM4HRJob(name, directory);
-			job.run();
-		}
-		return;
-	}
-
-	/**
-	 * name and directory are the name and directory for the input (and output) file;
-	 * input is assumed to be preexisting and have the .mop suffix
-	 * returns an integer indicating success or failure of the MOPAC calculation: 1 for success, 0 for failure;
-	 * this function is based on the Gaussian analogue
-	 */
-	public int runMOPAC(String name, String directory){
-
-		QMJobRunnable job = new MOPACJob(name, directory);
-		return job.run();
-
-	}
-
-	//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the Gaussian .log file
-	//may want to split this into several functions
 	public ThermoData parseGaussianPM3(String name, String directory, ChemGraph p_chemGraph){
 
 		QMParsable parser = new GaussianPM3Parser(name, directory, p_chemGraph);
@@ -736,144 +553,26 @@ public class QMTP implements GeneralGAPP {
 
 	//parse the results using cclib and CanTherm and return a ThermoData object; name and directory indicate the location of the MM4 .mm4out file
 	//formerly known as parseMM4withForceMat
-	public QMData performCanThermCalcs(String name, String directory, ChemGraph p_chemGraph, double[] dihedralMinima, boolean forceRRHO){
-		//1. parse the MM4 file with cclib to get atomic number vector and geometry
+	public IQMData performCanThermCalcs(String name, String directory, ChemGraph p_chemGraph, double[] dihedralMinima, boolean forceRRHO){
+		// parse the MM4 file with cclib to get atomic number vector and geometry
 		QMParser parser = new MM4Parser(name, directory, p_chemGraph, true);
 
+		/*
+		 * TODO if we don't call the parse() method the IQMData object
+		 * would not be created...
+		 */
 		ThermoData data = parser.parse();
 		
 		IQMData qmdata = parser.getQMData();
-		//unpack the needed results
-		double energy = qmdata.energy;
-		double stericEnergy = qmdata.stericEnergy;
-		ArrayList freqs = qmdata.freqs;
-		//2. compute H0/E0;  note that we will compute H0 for CanTherm by H0=Hf298(harmonicMM4)-(H298-H0)harmonicMM4, where harmonicMM4 values come from cclib parsing;  298.16 K is the standard temperature used by MM4; also note that Hthermal should include the R*T contribution (R*298.16 (enthalpy vs. energy difference)) and H0=E0 (T=0)	
-		double T_MM4 = 298.16;
-		energy *= QMConstants.Hartree_to_kcal;//convert from Hartree to kcal/mol
-		stericEnergy *= QMConstants.Hartree_to_kcal;//convert from Hartree to kcal/mol
-		double Hthermal = 5./2.*QMConstants.R*T_MM4/1000.;//enthalpy vs. energy difference(RT)+translation(3/2*R*T) contribution to thermal energy
-		//rotational contribution
-		if(p_chemGraph.getAtomNumber()==1) Hthermal += 0.0;
-		else if (p_chemGraph.isLinear()) Hthermal += QMConstants.R*T_MM4/1000.;
-		else Hthermal += 3./2.*QMConstants.R*T_MM4/1000;
-		//vibrational contribution
-		if(p_chemGraph.getAtomNumber()!=1)Hthermal+=QMConstants.R*calcVibH(freqs, T_MM4, QMConstants.h, QMConstants.k, QMConstants.c)/1000.;
-		energy = energy - Hthermal;
-		//3. write CanTherm input file
-		//determine point group using the SYMMETRY Program
-		String geom = qmdata.getSYMMETRYinput();
-		String pointGroup = determinePointGroupUsingSYMMETRYProgram(geom);
-		double sigmaCorr = getSigmaCorr(pointGroup);
-		String canInp = "Calculation: Thermo\n";
-		canInp += "Trange: 300 100 13\n";//temperatures from 300 to 1500 in increments of 100
-		canInp += "Scale: 1.0\n";//scale factor of 1
-		canInp += "Mol 1\n";
-		if(p_chemGraph.getAtomNumber()==1) canInp += "ATOM\n";
-		else if (p_chemGraph.isLinear()) canInp+="LINEAR\n";
-		else canInp+="NONLINEAR\n";
-		canInp += "GEOM MM4File " + name+".mm4out\n";//geometry file; ***special MM4 treatment in CanTherm; another option would be to use mm4opt file, but CanTherm code would need to be modified accordingly
-		canInp += "FORCEC MM4File "+name+".fmat\n";//force constant file; ***special MM4 treatment in CanTherm
-		if (forceRRHO) name = name + "_RRHO"; //"_RRHO" will be appended to InChIKey for RRHO calcs (though we want to use unmodified name in getQMDataWithCClib above, and in GEOM and FORCEC sections
-		canInp += "ENERGY "+ energy +" MM4\n";//***special MM4 treatment in CanTherm
-		canInp+="EXTSYM "+Math.exp(-sigmaCorr)+"\n";//***modified treatment in CanTherm; traditional EXTSYM integer replaced by EXTSYM double, to allow fractional values that take chirality into account
-		canInp+="NELEC 1\n";//multiplicity = 1; all cases we consider will be non-radicals
-		int rotors = p_chemGraph.getInternalRotor();
-		String rotInput = null;
-		if(!useHindRot || rotors==0 || forceRRHO) canInp += "ROTORS 0\n";//do not consider hindered rotors
-		else{
-			int rotorCount = 0;
-			canInp+="ROTORS "+rotors+ " "+name+".rotinfo\n";
-			canInp+="POTENTIAL separable mm4files_inertia\n";//***special MM4 treatment in canTherm;
-			String rotNumbersLine=""+stericEnergy;//the line that will contain V0 (kcal/mol), and all the dihedral minima (degrees)
-			rotInput = "L1: 1 2 3\n";
-			LinkedHashMap rotorInfo = p_chemGraph.getInternalRotorInformation();
-			Iterator iter = rotorInfo.keySet().iterator();
-			while(iter.hasNext()){
-				rotorCount++;
-				int[] rotorAtoms = (int[])iter.next();
-				LinkedHashSet rotatingGroup = (LinkedHashSet)rotorInfo.get(rotorAtoms);
-				Iterator iterGroup = rotatingGroup.iterator();
-				rotInput += "L2: " + rotorAtoms[4] +" "+rotorAtoms[1]+ " "+ rotorAtoms[2];//note: rotorAtoms[4] is the rotorSymmetry number as estimated by calculateRotorSymmetryNumber; this will be taken into account elsewhere
-				while (iterGroup.hasNext()){//print the atoms associated with rotorAtom 2
-					Integer id = (Integer)iterGroup.next();
-					if(id != rotorAtoms[2]) rotInput+= " "+id;//don't print atom2
-				}
-				rotInput += "\n";
-				canInp+=name + ".mm4rotopt"+rotorCount+" ";// potential files will be named as name.mm4rotopti
-				rotNumbersLine+=" "+dihedralMinima[rotorCount-1];
-			}
-			canInp+="\n"+rotNumbersLine+"\n";
-		}
-		canInp+="0\n";//no bond-additivity corrections
-		try{
-			File canFile=new File(directory+"/"+name+".can");
-			FileWriter fw = new FileWriter(canFile);
-			fw.write(canInp);
-			fw.close();
-			if(rotInput !=null){//write the rotor information
-				File rotFile=new File(directory+"/"+name+".rotinfo");
-				FileWriter fwr = new FileWriter(rotFile);
-				fwr.write(rotInput);
-				fwr.close();
-			}
-		}
-		catch(Exception e){
-			String err = "Error in writing CanTherm input \n";
-			err += e.toString();
-			Logger.logStackTrace(e);
-			System.exit(0);
-		}
-		//4 call CanTherm 
+		//unpack the needed results and write cantherm input file
+		QMInputWritable canthermWriter = new CanThermInputWriter(name, directory, p_chemGraph, qmdata, dihedralMinima, forceRRHO);
+		File canThermFile = canthermWriter.write();
+		
+		// call CanTherm 
 		QMJobRunnable canthermJob = new CanThermJob(name, directory);
 		canthermJob.run();
 		
 		return qmdata;
-	}
-
-	public ThermoData parseCanThermFile(String name, String directory, ChemGraph p_chemGraph){
-		//5. read CanTherm output
-		Double Hf298 = null;
-		Double S298 = null;
-		Double Cp300 = null;
-		Double Cp400 = null;
-		Double Cp500 = null;
-		Double Cp600 = null;
-		Double Cp800 = null;
-		Double Cp1000 = null;
-		Double Cp1500 = null;
-		File file = new File(directory+"/"+name+".canout");
-		try{
-			FileReader in = new FileReader(file);
-			BufferedReader reader = new BufferedReader(in);
-			String line=reader.readLine();
-			while(!line.startsWith("Hf298 S298 Cps:")){//get to the end of the file with the data we want
-				line=reader.readLine();
-			}
-			String[] split = reader.readLine().trim().split("\\s+");//read the next line, which contains the information we want
-			Hf298 = Double.parseDouble(split[0]);
-			S298 = Double.parseDouble(split[1]);
-			Cp300 = Double.parseDouble(split[2]);
-			Cp400 = Double.parseDouble(split[3]);
-			Cp500 = Double.parseDouble(split[4]);
-			Cp600 = Double.parseDouble(split[5]);
-			Cp800 = Double.parseDouble(split[7]);
-			Cp1000 = Double.parseDouble(split[9]);
-			Cp1500 = Double.parseDouble(split[14]);
-			reader.close();
-			in.close();
-		}
-		catch(Exception e){
-			String err = "Error in reading CanTherm .canout file \n";
-			err += e.toString();
-			Logger.logStackTrace(e);
-			System.exit(0);
-		}
-
-		ThermoData result = new ThermoData(Hf298,S298,Cp300,Cp400,Cp500,Cp600,Cp800,Cp1000,Cp1500,3,1,1,"MM4 calculation; includes CanTherm analysis of force-constant matrix");//this includes rough estimates of uncertainty
-		result.setSource("MM4 calculation with CanTherm analysis");
-		Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
-
-		return result;
 	}
 
 	//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the MOPAC .out file
@@ -886,193 +585,6 @@ public class QMTP implements GeneralGAPP {
 		Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
 		return result;
 	}
-
-	//gets the statistical correction for S in dimensionless units (divided by R)
-	public double getSigmaCorr(String pointGroup){
-		double sigmaCorr=0;
-		//determine statistical correction factor for 1. external rotational symmetry (affects rotational partition function) and 2. chirality (will add R*ln2 to entropy) based on point group
-		//ref: http://cccbdb.nist.gov/thermo.asp
-		//assumptions below for Sn, T, Th, O, I seem to be in line with expectations based on order reported at: http://en.wikipedia.org/w/index.php?title=List_of_character_tables_for_chemically_important_3D_point_groups&oldid=287261611 (assuming order = symmetry number * 2 (/2 if chiral))...this appears to be true for all point groups I "know" to be correct
-		//minor concern: does SYMMETRY appropriately calculate all Sn groups considering 2007 discovery of previous errors in character tables (cf. Wikipedia article above)
-		if (pointGroup.equals("C1")) sigmaCorr=+Math.log(2.);//rot. sym. = 1, chiral
-		else if (pointGroup.equals("Cs")) sigmaCorr=0; //rot. sym. = 1
-		else if (pointGroup.equals("Ci")) sigmaCorr=0; //rot. sym. = 1
-		else if (pointGroup.equals("C2")) sigmaCorr=0;//rot. sym. = 2, chiral (corrections cancel)
-		else if (pointGroup.equals("C3")) sigmaCorr=+Math.log(2.)-Math.log(3.);//rot. sym. = 3, chiral
-		else if (pointGroup.equals("C4")) sigmaCorr=+Math.log(2.)-Math.log(4.);//rot. sym. = 4, chiral
-		else if (pointGroup.equals("C5")) sigmaCorr=+Math.log(2.)-Math.log(5.);//rot. sym. = 5, chiral
-		else if (pointGroup.equals("C6")) sigmaCorr=+Math.log(2.)-Math.log(6.);//rot. sym. = 6, chiral
-		else if (pointGroup.equals("C7")) sigmaCorr=+Math.log(2.)-Math.log(7.);//rot. sym. = 7, chiral
-		else if (pointGroup.equals("C8")) sigmaCorr=+Math.log(2.)-Math.log(8.);//rot. sym. = 8, chiral
-		else if (pointGroup.equals("D2")) sigmaCorr=+Math.log(2.)-Math.log(4.);//rot. sym. = 4, chiral
-		else if (pointGroup.equals("D3")) sigmaCorr=+Math.log(2.)-Math.log(6.);//rot. sym. = 6, chiral
-		else if (pointGroup.equals("D4")) sigmaCorr=+Math.log(2.)-Math.log(8.);//rot. sym. = 8, chiral
-		else if (pointGroup.equals("D5")) sigmaCorr=+Math.log(2.)-Math.log(10.);//rot. sym. = 10, chiral
-		else if (pointGroup.equals("D6")) sigmaCorr=+Math.log(2.)-Math.log(12.);//rot. sym. = 12, chiral
-		else if (pointGroup.equals("D7")) sigmaCorr=+Math.log(2.)-Math.log(14.);//rot. sym. = 14, chiral
-		else if (pointGroup.equals("D8")) sigmaCorr=+Math.log(2.)-Math.log(16.);//rot. sym. = 16, chiral
-		else if (pointGroup.equals("C2v")) sigmaCorr=-Math.log(2.);//rot. sym. = 2
-		else if (pointGroup.equals("C3v")) sigmaCorr=-Math.log(3.);//rot. sym. = 3
-		else if (pointGroup.equals("C4v")) sigmaCorr=-Math.log(4.);//rot. sym. = 4
-		else if (pointGroup.equals("C5v")) sigmaCorr=-Math.log(5.);//rot. sym. = 5
-		else if (pointGroup.equals("C6v")) sigmaCorr=-Math.log(6.);//rot. sym. = 6
-		else if (pointGroup.equals("C7v")) sigmaCorr=-Math.log(7.);//rot. sym. = 7
-		else if (pointGroup.equals("C8v")) sigmaCorr=-Math.log(8.);//rot. sym. = 8
-		else if (pointGroup.equals("C2h")) sigmaCorr=-Math.log(2.);//rot. sym. = 2
-		else if (pointGroup.equals("C3h")) sigmaCorr=-Math.log(3.);//rot. sym. = 3
-		else if (pointGroup.equals("C4h")) sigmaCorr=-Math.log(4.);//rot. sym. = 4
-		else if (pointGroup.equals("C5h")) sigmaCorr=-Math.log(5.);//rot. sym. = 5
-		else if (pointGroup.equals("C6h")) sigmaCorr=-Math.log(6.);//rot. sym. = 6
-		else if (pointGroup.equals("C7h")) sigmaCorr=-Math.log(7.);//rot. sym. = 7
-		else if (pointGroup.equals("C8h")) sigmaCorr=-Math.log(8.);//rot. sym. = 8
-		else if (pointGroup.equals("D2h")) sigmaCorr=-Math.log(4.);//rot. sym. = 4
-		else if (pointGroup.equals("D3h")) sigmaCorr=-Math.log(6.);//rot. sym. = 6
-		else if (pointGroup.equals("D4h")) sigmaCorr=-Math.log(8.);//rot. sym. = 8
-		else if (pointGroup.equals("D5h")) sigmaCorr=-Math.log(10.);//rot. sym. = 10
-		else if (pointGroup.equals("D6h")) sigmaCorr=-Math.log(12.);//rot. sym. = 12
-		else if (pointGroup.equals("D7h")) sigmaCorr=-Math.log(14.);//rot. sym. = 14
-		else if (pointGroup.equals("D8h")) sigmaCorr=-Math.log(16.);//rot. sym. = 16
-		else if (pointGroup.equals("D2d")) sigmaCorr=-Math.log(4.);//rot. sym. = 4
-		else if (pointGroup.equals("D3d")) sigmaCorr=-Math.log(6.);//rot. sym. = 6
-		else if (pointGroup.equals("D4d")) sigmaCorr=-Math.log(8.);//rot. sym. = 8
-		else if (pointGroup.equals("D5d")) sigmaCorr=-Math.log(10.);//rot. sym. = 10
-		else if (pointGroup.equals("D6d")) sigmaCorr=-Math.log(12.);//rot. sym. = 12
-		else if (pointGroup.equals("D7d")) sigmaCorr=-Math.log(14.);//rot. sym. = 14
-		else if (pointGroup.equals("D8d")) sigmaCorr=-Math.log(16.);//rot. sym. = 16
-		else if (pointGroup.equals("S4")) sigmaCorr=-Math.log(2.);//rot. sym. = 2 ;*** assumed achiral
-		else if (pointGroup.equals("S6")) sigmaCorr=-Math.log(3.);//rot. sym. = 3 ;*** assumed achiral
-		else if (pointGroup.equals("S8")) sigmaCorr=-Math.log(4.);//rot. sym. = 4 ;*** assumed achiral
-		else if (pointGroup.equals("T")) sigmaCorr=+Math.log(2.)-Math.log(12.);//rot. sym. = 12, *** assumed chiral
-		else if (pointGroup.equals("Th")) sigmaCorr=-Math.log(12.);//***assumed rot. sym. = 12
-		else if (pointGroup.equals("Td")) sigmaCorr=-Math.log(12.);//rot. sym. = 12
-		else if (pointGroup.equals("O")) sigmaCorr=+Math.log(2.)-Math.log(24.);//***assumed rot. sym. = 24, chiral
-		else if (pointGroup.equals("Oh")) sigmaCorr=-Math.log(24.);//rot. sym. = 24
-		else if (pointGroup.equals("Cinfv")) sigmaCorr=0;//rot. sym. = 1
-		else if (pointGroup.equals("Dinfh")) sigmaCorr=-Math.log(2.);//rot. sym. = 2
-		else if (pointGroup.equals("I")) sigmaCorr=+Math.log(2.)-Math.log(60.);//***assumed rot. sym. = 60, chiral
-		else if (pointGroup.equals("Ih")) sigmaCorr=-Math.log(60.);//rot. sym. = 60
-		else if (pointGroup.equals("Kh")) sigmaCorr=0;//arbitrarily set to zero...one could argue that it is infinite; apparently this is the point group of a single atom (cf. http://www.cobalt.chem.ucalgary.ca/ps/symmetry/tests/G_Kh); this should not have a rotational partition function, and we should not use the symmetry correction in this case
-		else{//this point should not be reached, based on checks performed in determinePointGroupUsingSYMMETRYProgram
-			Logger.critical("Unrecognized point group: "+ pointGroup);
-			System.exit(0);
-		}
-
-		return sigmaCorr;
-	}
-
-
-	//determine the point group using the SYMMETRY program (http://www.cobalt.chem.ucalgary.ca/ps/symmetry/)
-	//required input is a line with number of atoms followed by lines for each atom including atom number and x,y,z coordinates
-	//finalTol determines how loose the point group criteria are; values are comparable to those specifed in the GaussView point group interface
-	//public String determinePointGroupUsingSYMMETRYProgram(String geom, double finalTol){
-	public String determinePointGroupUsingSYMMETRYProgram(String geom){
-		int attemptNumber = 1;
-		int maxAttemptNumber = 4;
-		boolean pointGroupFound=false;
-		//write the input file
-		try {
-			File inputFile=new File(qmfolder+"symminput.txt");//SYMMETRY program directory
-			FileWriter fw = new FileWriter(inputFile);
-			fw.write(geom);
-			fw.close();
-		} catch (IOException e) {
-			String err = "Error writing input file for point group calculation";
-			err += e.toString();
-			Logger.critical(err);
-			System.exit(0);
-		}
-		String result = "";
-		String command = "";
-		while (attemptNumber<=maxAttemptNumber && !pointGroupFound){
-			//call the program and read the result
-			result = "";
-			String [] lineArray;
-			try{ 
-				if (System.getProperty("os.name").toLowerCase().contains("windows")){//the Windows case where the precompiled executable seems to need to be called from a batch script
-					if(attemptNumber==1) command = "\""+System.getProperty("RMG.workingDirectory")+"/scripts/symmetryDefault2.bat\" "+qmfolder+ "symminput.txt";//12/1/09 gmagoon: switched to use slightly looser criteria of 0.02 rather than 0.01 to handle methylperoxyl radical result from MOPAC
-					else if (attemptNumber==2) command = "\""+System.getProperty("RMG.workingDirectory")+"/scripts/symmetryLoose.bat\" " +qmfolder+ "symminput.txt";//looser criteria (0.1 instead of 0.01) to properly identify C2v group in VBURLMBUVWIEMQ-UHFFFAOYAVmult5 (InChI=1/C3H4O2/c1-3(2,4)5/h1-2H2/mult5) MOPAC result; C2 and sigma were identified with default, but it should be C2 and sigma*2
-					else if (attemptNumber==3) command = "\""+System.getProperty("RMG.workingDirectory")+"/scripts/symmetryLoose2.bat\" " +qmfolder+ "symminput.txt";//looser criteria to properly identify D2d group in XXHDHKZTASMVSX-UHFFFAOYAM
-					else if (attemptNumber==4){
-						Logger.error("*****WARNING****: Using last-resort symmetry estimation options; symmetry may be underestimated");
-						command = "\""+System.getProperty("RMG.workingDirectory")+"/scripts/symmetryLastResort.bat\" " +qmfolder+ "symminput.txt";//last resort criteria to avoid crashing (this will likely result in identification of C1 point group)
-					}
-					else{
-						Logger.critical("Invalid attemptNumber: "+ attemptNumber);
-						System.exit(0);
-					}
-				}
-				else{//in other (non-Windows) cases, where it is compiled from scratch, we should be able to run this directly
-					if(attemptNumber==1) command = System.getProperty("RMG.workingDirectory")+"/bin/SYMMETRY.EXE -final 0.02 " +qmfolder+ "symminput.txt";//12/1/09 gmagoon: switched to use slightly looser criteria of 0.02 rather than 0.01 to handle methylperoxyl radical result from MOPAC
-					else if (attemptNumber==2) command = System.getProperty("RMG.workingDirectory")+"/bin/SYMMETRY.EXE -final 0.1 " +qmfolder+ "symminput.txt";//looser criteria (0.1 instead of 0.01) to properly identify C2v group in VBURLMBUVWIEMQ-UHFFFAOYAVmult5 (InChI=1/C3H4O2/c1-3(2,4)5/h1-2H2/mult5) MOPAC result; C2 and sigma were identified with default, but it should be C2 and sigma*2
-					else if (attemptNumber==3) command = System.getProperty("RMG.workingDirectory")+"/bin/SYMMETRY.EXE -primary 0.2 -final 0.1 " +qmfolder+ "symminput.txt";//looser criteria to identify D2d group in XXHDHKZTASMVSX-UHFFFAOYAM (InChI=1/C12H16/c1-5-9-10(6-2)12(8-4)11(9)7-3/h5-12H,1-4H2)
-					else if (attemptNumber==4){
-						Logger.warning("*****WARNING****: Using last-resort symmetry estimation options; symmetry may be underestimated");
-						command = System.getProperty("RMG.workingDirectory")+"/bin/SYMMETRY.EXE -final 0.0 " +qmfolder+ "symminput.txt";//last resort criteria to avoid crashing (this will likely result in identification of C1 point group)
-					}
-					else{
-						Logger.critical("Invalid attemptNumber: "+ attemptNumber);
-						System.exit(0);
-					}
-				}
-				Process symmProc = Runtime.getRuntime().exec(command);
-				//check for errors and display the error if there is one
-				InputStream is = symmProc.getInputStream();
-				InputStreamReader isr = new InputStreamReader(is);
-				BufferedReader br = new BufferedReader(isr);
-				String line=null;
-				while ( (line = br.readLine()) != null) {
-					if(line.startsWith("It seems to be the ")){//last line, ("It seems to be the [x] point group") indicates point group
-						lineArray = line.split(" ");//split the line around spaces
-						result = lineArray[5];//point group string should be the 6th word
-					}
-				}
-				int exitValue = symmProc.waitFor();
-				symmProc.getErrorStream().close();
-				symmProc.getOutputStream().close();
-				br.close();
-				isr.close();
-				is.close();
-			}
-			catch(Exception e){
-				String err = "Error in running point group calculation process using SYMMETRY \n";
-				err += e.toString();
-				Logger.logStackTrace(e);
-				System.exit(0);
-			}
-			//check for a recognized point group
-			if (result.equals("C1")||result.equals("Cs")||result.equals("Ci")||result.equals("C2")||result.equals("C3")||result.equals("C4")||result.equals("C5")||result.equals("C6")||result.equals("C7")||result.equals("C8")||result.equals("D2")||result.equals("D3")||result.equals("D4")||result.equals("D5")||result.equals("D6")||result.equals("D7")||result.equals("D8")||result.equals("C2v")||result.equals("C3v")||result.equals("C4v")||result.equals("C5v")||result.equals("C6v")||result.equals("C7v")||result.equals("C8v")||result.equals("C2h")||result.equals("C3h")||result.equals("C4h")||result.equals("C5h")||result.equals("C6h")||result.equals("C7h")||result.equals("C8h")||result.equals("D2h")||result.equals("D3h")||result.equals("D4h")||result.equals("D5h")||result.equals("D6h")||result.equals("D7h")||result.equals("D8h")||result.equals("D2d")||result.equals("D3d")||result.equals("D4d")||result.equals("D5d")||result.equals("D6d")||result.equals("D7d")||result.equals("D8d")||result.equals("S4")||result.equals("S6")||result.equals("S8")||result.equals("T")||result.equals("Th")||result.equals("Td")||result.equals("O")||result.equals("Oh")||result.equals("Cinfv")||result.equals("Dinfh")||result.equals("I")||result.equals("Ih")||result.equals("Kh")) pointGroupFound=true;
-			else{
-				if(attemptNumber < maxAttemptNumber) Logger.info("Attempt number "+attemptNumber+" did not identify a recognized point group (" +result+"). Will retry with looser point group criteria.");
-				else{
-					Logger.critical("Final attempt number "+attemptNumber+" did not identify a recognized point group (" +result+"). Exiting.");
-					System.exit(0);
-				}
-				attemptNumber++;
-			}
-		} 
-		Logger.info("Point group: "+ result);//print result, at least for debugging purposes
-
-		return result;
-	}
-
-	//gmagoon 6/23/10
-	//calculate the vibrational contribution (divided by R, units of K) at temperature, T, in Kelvin to Hthermal (ZPE not included)
-	//p_freqs in cm^-1; c in cm/s; k in J/K; h in J-s
-	//we need to ignore zero frequencies, as MM4 does, to avoid dividing by zero; based on equation for Ev in http://www.gaussian.com/g_whitepap/thermo.htm; however, we ignore zero point contribution to be consistent with the input that CanTherm currently takes; note, however, that this could introduce some small inaccuracies, as the frequencies may be slightly different in CanTherm vs. MM4, particularly for a frequency < 7.7 cm^-1 (treated as zero in MM4)
-	public double calcVibH(ArrayList p_freqs, double p_T, double h, double k, double c){
-		double Hcontrib = 0;
-		double dr;
-		for(int i=0; i < p_freqs.size(); i++){
-			double freq = (Double)p_freqs.get(i);
-			if(freq > 0.0){//ignore zero frequencies as MM4 does
-				dr = h*c*freq/(k*p_T); //frequently used dimensionless ratio
-				Hcontrib = Hcontrib + dr*p_T/(Math.exp(dr) - 1.);
-			}
-		}
-
-		return Hcontrib;
-	}
-
 
 	//determine the QM filename (element 0) and augmented InChI (element 1) for a ChemGraph
 	//QM filename is InChIKey appended with mult3, mult4, mult5, or mult6 for multiplicities of 3 or higher
