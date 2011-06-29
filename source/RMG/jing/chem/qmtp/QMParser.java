@@ -40,6 +40,8 @@ public abstract class QMParser implements QMParsable{
 	
 	IParsingTool parsingTool;
 	
+	IQMData data;
+	
 	public QMParser(String name, String directory, ChemGraph p_chemGraph){
 		this.name = name;
 		
@@ -176,9 +178,10 @@ public abstract class QMParser implements QMParsable{
 		//        return result;
 
 		Process parserJob = run();
-		IQMData qmdata = read(parserJob);
 		
-		TDPropertiesCalculator calculator = new TDPropertiesCalculator(qmdata);
+		read(parserJob);
+		
+		TDPropertiesCalculator calculator = new TDPropertiesCalculator(data);
 		
 		return calculator.calculate();
 		
@@ -204,8 +207,11 @@ public abstract class QMParser implements QMParsable{
 
 	@Override
 	public IQMData read(Process job) {
-		IQMData data = parsingTool.parse(job, p_chemGraph, false);	
+		data = parsingTool.parse(job, p_chemGraph);	
 		return data;
 
+	}
+	public IQMData getQMData() {
+		return data;
 	}
 }
