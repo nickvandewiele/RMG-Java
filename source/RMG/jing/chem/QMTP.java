@@ -287,6 +287,12 @@ public class QMTP implements GeneralGAPP {
 	/**
 	 * //if there is no data in the libraries, calculate the result based on QM or MM calculations;
 	 *  the below steps will be generalized later to allow for other quantum mechanics packages, etc.
+	 *  
+	 *  Several steps can be identified:
+	 *  <LI> InChI generation of ChemGraph
+	 *  <LI> Verification whether this species has already been processed
+	 *  <LI> Feeding species to QM Program
+	 *  <LI> QM Program Output File Parsing
 	 * @param p_chemGraph
 	 * @return
 	 */
@@ -308,6 +314,14 @@ public class QMTP implements GeneralGAPP {
 		 */
 		QMVerifier verifier = new QMVerifier(name, directory, InChIaug);
 		verifier.verify();
+		
+		/*
+		 * if a succesful job exists (by one of the QM Programs),
+		 *  you can readily parse it already.
+		 */
+		if(verifier.succesfulJobExists()){
+			result = parseOutput(name, directory, p_chemGraph);
+		}
 		
 		if(qmMethod.equals("pm3")){
 			
@@ -389,23 +403,13 @@ public class QMTP implements GeneralGAPP {
 
 
 			}
-			//5. parse QM output and record as thermo data (function includes symmetry/point group calcs, etc.); if both Gaussian and MOPAC results exist, Gaussian result is used
-			if (verifier.isGaussianResultExists() || (qmprogram.equals("gaussian03") && !verifier.isMopacResultExists())){
-				//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the Gaussian .log file
-				//may want to split this into several functions
-				QMParsable parser = new GaussianPM3Parser(name, directory, p_chemGraph);
-				result = parser.parse();
-				result.setSource("Gaussian PM3 calculation");
-				Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
+			/*
+			 * 5. parse QM output and record as thermo data (function includes symmetry/point group calcs,
+			 *  etc.); if both Gaussian and MOPAC results exist, Gaussian result is used
+			 */
+			
+			result = parseOutput(name, directory, p_chemGraph);
 
-			}
-			else if (verifier.isMopacResultExists() || qmprogram.equals("mopac") || qmprogram.equals("both")){
-				result = parseMopacPM3(name, directory, p_chemGraph);
-			}
-			else{
-				Logger.critical("Unexpected situation in QMTP thermo estimation");
-				System.exit(0);
-			}
 		}
 		else{//mm4 case
 			/*
@@ -476,22 +480,71 @@ public class QMTP implements GeneralGAPP {
 					if (p_chemGraph.getInternalRotor()>0) performCanThermCalcs(name, directory, p_chemGraph, dihedralMinima, true);//calculate RRHO case for comparison
 				}
 			}
-			//5. parse MM4 output and record as thermo data (function includes symmetry/point group calcs, etc.)
-			if(!useCanTherm) result = parseMM4(name, directory, p_chemGraph);
-			else{
-				//if (qmdata==null) qmdata = getQMDataWithCClib(name, directory, p_chemGraph, true);//get qmdata if it is null (i.e. if a pre-existing successful result exists and it wasn't read in above)
-				CanThermParser canthermParser = new CanThermParser(name, directory, p_chemGraph);
-				result = canthermParser.parse();
-				if (p_chemGraph.getInternalRotor()>0) {
-					//print the RRHO result for comparison
-					canthermParser = new CanThermParser(name+"_RRHO", directory, p_chemGraph);
-				}
-			}
+			
 		}
 
 		return result;
 	}
 
+	/**
+	 * wrapper method for exte
+	 * @param name
+	 * @param directory
+	 * @param p_chemGraph
+	 * @return
+	 */
+	private ThermoData parseOutput(String name, String directory,
+			ChemGraph p_chemGraph) {
+		ThermoData result = null;
+		if(qmMethod.equals("pm3")){
+			if ((qmprogram.equals("gaussian03"))){
+				//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the Gaussian .log file
+				//may want to split this into several functions
+				QMParsable parser = new GaussianPM3Parser(name, directory, p_chemGraph);
+				result = parser.parse();
+				result.setSource("Gaussian PM3 calculation");
+				Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
+				return result;
+
+			}
+			else if (qmprogram.equals("mopac") || qmprogram.equals("both")){
+				QMParsable parser = new MOPACPM3Parser(name, directory, p_chemGraph);
+
+				result = parser.parse();
+				result.setSource("MOPAC PM3 calculation");
+				Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
+				return result;
+			}
+			else if (qmprogram.equals("mm4")){
+				//5. parse MM4 output and record as thermo data (function includes symmetry/point group calcs, etc.)
+				if(!useCanTherm) {
+					QMParsable parser = new MM4Parser(name, directory, p_chemGraph);
+
+					result = parser.parse();
+
+					result.setSource("MM4 calculation");
+					Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
+				}
+				else{
+					//if (qmdata==null) qmdata = getQMDataWithCClib(name, directory, p_chemGraph, true);//get qmdata if it is null (i.e. if a pre-existing successful result exists and it wasn't read in above)
+					CanThermParser canthermParser = new CanThermParser(name, directory, p_chemGraph);
+					result = canthermParser.parse();
+					if (p_chemGraph.getInternalRotor()>0) {
+						//print the RRHO result for comparison
+						canthermParser = new CanThermParser(name+"_RRHO", directory, p_chemGraph);
+					}
+				}
+			}
+			else{
+				Logger.critical("Unexpected situation in QMTP thermo estimation");
+				System.exit(0);
+			}
+		}
+		
+		
+		return result;
+		
+	}
 	protected static QMTP getINSTANCE() {
 		return INSTANCE;
 	}
@@ -585,18 +638,6 @@ public class QMTP implements GeneralGAPP {
 		return result;
 	}
 
-	//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the MM4 .mm4out file
-	public ThermoData parseMM4(String name, String directory, ChemGraph p_chemGraph){
-
-		QMParsable parser = new MM4Parser(name, directory, p_chemGraph);
-
-		ThermoData result = parser.parse();
-
-		result.setSource("MM4 calculation");
-		Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
-		return result;
-	}
-
 	//parse the results using cclib and CanTherm and return a ThermoData object; name and directory indicate the location of the MM4 .mm4out file
 	//formerly known as parseMM4withForceMat
 	public IQMData performCanThermCalcs(String name, String directory, ChemGraph p_chemGraph, double[] dihedralMinima, boolean forceRRHO){
@@ -619,17 +660,6 @@ public class QMTP implements GeneralGAPP {
 		canthermJob.run();
 
 		return qmdata;
-	}
-
-	//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the MOPAC .out file
-	public ThermoData parseMopacPM3(String name, String directory, ChemGraph p_chemGraph){
-
-		QMParsable parser = new MOPACPM3Parser(name, directory, p_chemGraph);
-
-		ThermoData result = parser.parse();
-		result.setSource("MOPAC PM3 calculation");
-		Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
-		return result;
 	}
 
 	//determine the QM filename (element 0) and augmented InChI (element 1) for a ChemGraph

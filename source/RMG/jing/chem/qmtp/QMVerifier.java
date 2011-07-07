@@ -437,6 +437,14 @@ public class QMVerifier {
 		
 	}
 
+	/**
+	 * checks whether one of the flags is true.
+	 * If so, it returns true.
+	 * @return
+	 */
+	public boolean succesfulJobExists(){
+		return (gaussianResultExists || mopacResultExists || mm4ResultExists);
+	}
 	public boolean isGaussianResultExists() {
 		return gaussianResultExists;
 	}
