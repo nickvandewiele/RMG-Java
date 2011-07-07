@@ -250,11 +250,11 @@ public class QMTP implements GeneralGAPP {
 
 	public ThermoData generateQMThermoData(ChemGraph p_chemGraph){
 		//if there is no data in the libraries, calculate the result based on QM or MM calculations; the below steps will be generalized later to allow for other quantum mechanics packages, etc.
-		String qmProgram = qmprogram;
+		
 		String qmMethod = "";
-		if(qmProgram.equals("mm4")||qmProgram.equals("mm4hr")){
+		if(qmprogram.equals("mm4")||qmprogram.equals("mm4hr")){
 			qmMethod = "mm4";
-			if(qmProgram.equals("mm4hr")) useHindRot=true;
+			if(qmprogram.equals("mm4hr")) useHindRot=true;
 		}
 		else{
 			qmMethod="pm3"; //may eventually want to pass this to various functions to choose which "sub-function" to call
@@ -288,7 +288,7 @@ public class QMTP implements GeneralGAPP {
 				int multiplicity = p_chemGraph.getRadicalNumber()+1; //multiplicity = radical number + 1
 				while(successFlag==0 && attemptNumber <= maxAttemptNumber){
 					//IF block to check which program to use
-					if (qmProgram.equals("gaussian03")){
+					if (qmprogram.equals("gaussian03")){
 						if(p_chemGraph.getAtomNumber() > 1){
 							maxAttemptNumber = createGaussianPM3Input(name, directory, p_3dfile, attemptNumber, InChIaug, multiplicity);
 						}
@@ -304,7 +304,7 @@ public class QMTP implements GeneralGAPP {
 						QMJobRunnable gaussianJob = new GaussianJob(name, directory);
 						successFlag = gaussianJob.run();
 					}
-					else if (qmProgram.equals("mopac") || qmProgram.equals("both")){
+					else if (qmprogram.equals("mopac") || qmprogram.equals("both")){
 						maxAttemptNumber = createMopacPM3Input(name, directory, p_3dfile, attemptNumber, InChIaug, multiplicity);
 						/*
 						 * name and directory are the name and directory for the input (and output) file;
@@ -325,8 +325,8 @@ public class QMTP implements GeneralGAPP {
 					}
 					else if(successFlag==0){
 						if(attemptNumber==maxAttemptNumber){//if this is the last possible attempt, and the calculation fails, exit with an error message
-							if(qmProgram.equals("both")){ //if we are running with "both" option and all keywords fail, try with Gaussian
-								qmProgram = "gaussian03";
+							if(qmprogram.equals("both")){ //if we are running with "both" option and all keywords fail, try with Gaussian
+								qmprogram = "gaussian03";
 								Logger.info("*****Final MOPAC attempt (#" + maxAttemptNumber + ") on species " + name + " ("+InChIaug+") failed. Trying to use Gaussian.");
 								attemptNumber=0;//this needs to be 0 so that when we increment attemptNumber below, it becomes 1 when returning to the beginning of the for loop
 								maxAttemptNumber=1;
@@ -348,7 +348,7 @@ public class QMTP implements GeneralGAPP {
 
 			}
 			//5. parse QM output and record as thermo data (function includes symmetry/point group calcs, etc.); if both Gaussian and MOPAC results exist, Gaussian result is used
-			if (gaussianResultExists || (qmProgram.equals("gaussian03") && !mopacResultExists)){
+			if (gaussianResultExists || (qmprogram.equals("gaussian03") && !mopacResultExists)){
 				//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the Gaussian .log file
 				//may want to split this into several functions
 				QMParsable parser = new GaussianPM3Parser(name, directory, p_chemGraph);
@@ -357,7 +357,7 @@ public class QMTP implements GeneralGAPP {
 				Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
 				
 			}
-			else if (mopacResultExists || qmProgram.equals("mopac") || qmProgram.equals("both")){
+			else if (mopacResultExists || qmprogram.equals("mopac") || qmprogram.equals("both")){
 				result = parseMopacPM3(name, directory, p_chemGraph);
 			}
 			else{
