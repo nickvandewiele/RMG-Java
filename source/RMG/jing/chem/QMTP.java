@@ -80,7 +80,27 @@ public class QMTP implements GeneralGAPP {
 	public static String qmfolder= "QMfiles/";
 	//   protected static HashMap library;		//as above, may be able to move this and associated functions to GeneralGAPP (and possibly change from "x implements y" to "x extends y"), as it is common to both GATP and QMTP
 	protected ThermoGAGroupLibrary thermoLibrary; //needed for HBI
-	public static String qmprogram= "both";//the qmprogram can be "mopac", "gaussian03", "both" (MOPAC and Gaussian), or "mm4"/"mm4hr"
+
+	/*
+	 * the qmprogram can be 
+	 * "mopac", 
+	 * "gaussian03",
+	 *  "both" (MOPAC and Gaussian), 
+	 *  "mm4",
+	 *  "mm4hr"
+	 */
+	public static String qmprogram= "both";
+
+	/*
+	 * the computational method called by one of the QM Programs.
+	 * can be:
+	 * "PM3",
+	 * "MM4",
+	 * "MM4HR"
+	 * 
+	 */
+	public static String qmMethod;
+
 	public static boolean usePolar = false; //use polar keyword in MOPAC
 	public static boolean useCanTherm = true; //whether to use CanTherm in MM4 cases for interpreting output via force-constant matrix; this will hopefully avoid zero frequency issues
 	public static boolean useHindRot = false;//whether to use HinderedRotor scans with MM4 (requires useCanTherm=true)
@@ -247,14 +267,21 @@ public class QMTP implements GeneralGAPP {
 		return result;
 		//#]
 	}
-
+	/**
+	 * //if there is no data in the libraries, calculate the result based on QM or MM calculations;
+	 *  the below steps will be generalized later to allow for other quantum mechanics packages, etc.
+	 * @param p_chemGraph
+	 * @return
+	 */
 	public ThermoData generateQMThermoData(ChemGraph p_chemGraph){
-		//if there is no data in the libraries, calculate the result based on QM or MM calculations; the below steps will be generalized later to allow for other quantum mechanics packages, etc.
 		
-		String qmMethod = "";
+
 		if(qmprogram.equals("mm4")||qmprogram.equals("mm4hr")){
 			qmMethod = "mm4";
-			if(qmprogram.equals("mm4hr")) useHindRot=true;
+			if(qmprogram.equals("mm4hr")) {
+				qmMethod = "mm4hr";
+				useHindRot=true;
+			}
 		}
 		else{
 			qmMethod="pm3"; //may eventually want to pass this to various functions to choose which "sub-function" to call
@@ -355,7 +382,7 @@ public class QMTP implements GeneralGAPP {
 				result = parser.parse();
 				result.setSource("Gaussian PM3 calculation");
 				Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
-				
+
 			}
 			else if (mopacResultExists || qmprogram.equals("mopac") || qmprogram.equals("both")){
 				result = parseMopacPM3(name, directory, p_chemGraph);
@@ -488,7 +515,7 @@ public class QMTP implements GeneralGAPP {
 		return QMInputWriter.maxAttemptNumber;
 	}
 
-	
+
 	/**
 	 * creates MM4 rotor input file and MM4 batch file in directory 
 	 * with filenames name.mm4roti and name.comi, respectively
@@ -563,16 +590,16 @@ public class QMTP implements GeneralGAPP {
 		 * would not be created...
 		 */
 		ThermoData data = parser.parse();
-		
+
 		IQMData qmdata = parser.getQMData();
 		//unpack the needed results and write cantherm input file
 		QMInputWritable canthermWriter = new CanThermInputWriter(name, directory, p_chemGraph, qmdata, dihedralMinima, forceRRHO);
 		File canThermFile = canthermWriter.write();
-		
+
 		// call CanTherm 
 		QMJobRunnable canthermJob = new CanThermJob(name, directory);
 		canthermJob.run();
-		
+
 		return qmdata;
 	}
 
