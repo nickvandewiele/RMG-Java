@@ -51,7 +51,7 @@ public class GaussianPM3InputWriter extends QMInputWriter implements QMInputWrit
 
 			String command=null;
 			String molPath=null;
-			if(attemptNumber<=QMInputWriter.scriptAttempts){//use UFF-refined coordinates
+			if(attemptNumber<= scriptAttempts){//use UFF-refined coordinates
 				molPath = molfile.getPath();
 			}
 			else{//use crude coordinates
