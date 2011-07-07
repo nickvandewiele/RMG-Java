@@ -28,9 +28,12 @@ public class QMVerifier {
 	
 	boolean mm4ResultExists;
 	
-	public QMVerifier(String name, String directory, String InChIaug){
+	public QMVerifier(String name, String InChIaug){
 		this.name = name;
-		this.directory = directory;
+		directory = QMTP.qmfolder;
+		File dir=new File(directory);
+		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+
 		this.InChIaug = InChIaug;
 	}
 	

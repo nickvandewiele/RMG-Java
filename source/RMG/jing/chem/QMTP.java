@@ -39,7 +39,6 @@ import jing.chem.qmtp.CanThermParser;
 import jing.chem.qmtp.GaussianJob;
 import jing.chem.qmtp.GaussianPM3InputWriter;
 import jing.chem.qmtp.GaussianPM3Parser;
-import jing.chem.qmtp.IParsingTool;
 import jing.chem.qmtp.IQMData;
 import jing.chem.qmtp.MM4HRInputWriter;
 import jing.chem.qmtp.MM4HRJob;
@@ -52,7 +51,6 @@ import jing.chem.qmtp.MOPACPM3Parser;
 import jing.chem.qmtp.QMConstants;
 import jing.chem.qmtp.QMInputWritable;
 import jing.chem.qmtp.QMInputWriter;
-import jing.chem.qmtp.QMJob;
 import jing.chem.qmtp.QMJobRunnable;
 import jing.chem.qmtp.QMParsable;
 import jing.chem.qmtp.QMParser;
@@ -62,14 +60,6 @@ import jing.chemUtil.*;
 import jing.param.*;
 
 import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-
-import quicktime.qd3d.math.Point3D;
 import jing.rxnSys.Logger;
 
 //quantum mechanics thermo property estimator; analog of GATP
@@ -101,6 +91,7 @@ public class QMTP implements GeneralGAPP {
 	 */
 	public static String qmMethod;
 
+	public Map<String, Integer> mapMaxAttemptNumber;
 	public static boolean usePolar = false; //use polar keyword in MOPAC
 	public static boolean useCanTherm = true; //whether to use CanTherm in MM4 cases for interpreting output via force-constant matrix; this will hopefully avoid zero frequency issues
 	public static boolean useHindRot = false;//whether to use HinderedRotor scans with MM4 (requires useCanTherm=true)
@@ -122,9 +113,17 @@ public class QMTP implements GeneralGAPP {
 			}
 		}
 		else{
-			 //may eventually want to pass this to various functions to choose which "sub-function" to call
+			//may eventually want to pass this to various functions to choose which "sub-function" to call
 			qmMethod="pm3";
 		}
+
+		mapMaxAttemptNumber = new HashMap<String, Integer>();
+		mapMaxAttemptNumber.put("gaussian03", 36);
+		mapMaxAttemptNumber.put("mopac", 10);
+		mapMaxAttemptNumber.put("both", 10);
+		mapMaxAttemptNumber.put("mm4", 4);
+		mapMaxAttemptNumber.put("mm4hr", 4);
+
 
 		// initializeLibrary(); //gmagoon 72509: commented out in GATP, so I am mirroring the change here; other library functions below also commented out
 		initializePrimaryThermoLibrary();
@@ -292,38 +291,35 @@ public class QMTP implements GeneralGAPP {
 	 *  <LI> InChI generation of ChemGraph
 	 *  <LI> Verification whether this species has already been processed (and parse it if so)
 	 *  <LI> Generating 3D coords
-	 *  <LI> Feeding species to QM Program
+	 *  <LI> Creating QM input file and Feeding species to QM Program
 	 *  <LI> QM Program Output File Parsing
 	 * @param p_chemGraph
 	 * @return
 	 */
 	public ThermoData generateQMThermoData(ChemGraph p_chemGraph){
-		
+
 		//molfile that will store 3D coords
 		molFile p_3dfile = null;
-		
+
 		ThermoData result = new ThermoData();
 		double[] dihedralMinima = null;
 
 		String [] InChInames = getQMFileName(p_chemGraph);//determine the filename (InChIKey) and InChI with appended info for triplets, etc.
 		String name = InChInames[0];
 		String InChIaug = InChInames[1];
-		String directory = qmfolder;
-		File dir=new File(directory);
-		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
 		
 		/*
 		 * verify whether a succesful QM results exists for this particular species:
 		 */
-		QMVerifier verifier = new QMVerifier(name, directory, InChIaug);
+		QMVerifier verifier = new QMVerifier(name, InChIaug);
 		verifier.verify();
-		
+
 		/*
 		 * if a succesful job exists (by one of the QM Programs),
-		 *  you can readily parse it already.
+		 *  you can readily parse it.
 		 */
 		if(verifier.succesfulJobExists()){
-			result = parseOutput(name, directory, p_chemGraph);
+			result = parseOutput(name, p_chemGraph);
 			return result;
 		}
 		/*
@@ -331,166 +327,196 @@ public class QMTP implements GeneralGAPP {
 		 */
 		else{
 			p_3dfile = generate3DCoords(p_chemGraph, name);
-			
-			if(qmMethod.equals("pm3")){
-				
-				/*
-				 * if a successful result doesn't exist from previous run (or from this run), 
-				 * run the calculation; if a successful result exists, we will skip directly to 
-				 * parsing the file
-				 */
-				if(!verifier.isGaussianResultExists() && !verifier.isMopacResultExists()){
-					
-					//3. create the Gaussian or MOPAC input file
-					directory = qmfolder;
-					dir=new File(directory);
-					directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
-					int attemptNumber=1;//counter for attempts using different keywords
-					int successFlag=0;//flag for success of Gaussian run; 0 means it failed, 1 means it succeeded
-					int maxAttemptNumber=1;
-					int multiplicity = p_chemGraph.getRadicalNumber()+1; //multiplicity = radical number + 1
-					while(successFlag==0 && attemptNumber <= maxAttemptNumber){
-						//IF block to check which program to use
-						if (qmprogram.equals("gaussian03")){
-							if(p_chemGraph.getAtomNumber() > 1){
-								maxAttemptNumber = createGaussianPM3Input(name, directory, p_3dfile, attemptNumber, InChIaug, multiplicity);
-							}
-							else{
-								maxAttemptNumber = createGaussianPM3Input(name, directory, p_3dfile, -1, InChIaug, multiplicity);//use -1 for attemptNumber for monoatomic case
-							}
-							//4. run Gaussian
-							/*
-							 * name and directory are the name and directory for the input (and output) file;
-							 * input is assumed to be preexisting and have the .gjf suffix
-							 * returns an integer indicating success or failure of the Gaussian calculation: 1 for success, 0 for failure;
+
+
+			int attemptNumber=1;//counter for attempts using different keywords
+
+			//dynamic flag for success of Gaussian run; 0 means it failed, 1 means it succeeded
+			int successFlag=0;
+
+			/*
+			 * get max number of attempts, based on the qm program that is used.
+			 */
+			int maxAttemptNumber = mapMaxAttemptNumber.get(qmprogram);
+			int multiplicity = p_chemGraph.getRadicalNumber()+1; //multiplicity = radical number + 1
+
+			while(successFlag==0 && attemptNumber <= maxAttemptNumber){
+
+				createQMInput(name,p_chemGraph, p_3dfile, attemptNumber, InChIaug, multiplicity);
+
+				successFlag = runQM(name);
+
+
+				//new IF block to check success
+				if(successFlag==1){
+					Logger.info("Attempt #"+attemptNumber + " on species " + name + " ("+InChIaug+") succeeded.");
+					//run rotor calculations if necessary
+					int rotors = p_chemGraph.getInternalRotor();
+					if(qmprogram.equals("mm4hr") && useHindRot && rotors > 0){
+						//we should re-run scans even if pre-existing scans exist because atom numbering may change from case to case; a better solution would be to check for stored CanTherm output and use that if available
+						Logger.info("Running rotor scans on "+name+"...");
+						dihedralMinima = createMM4RotorInput(name, p_chemGraph, rotors);//we don't worry about checking InChI here; if there is an InChI mismatch it should be caught
+						//name and directory are the name and directory for the input (and output) file;
+						//input script is assumed to be preexisting and have the .comi suffix where i is a number between 1 and rotors
+						for(int j=1;j<=rotors;j++){
+
+							/**
+							 * TODO for now, name for MM4HR job also contains some 
+							 * input file extension and index j...
+							 * 
+							 * should be modified in the future!
 							 */
-							QMJobRunnable gaussianJob = new GaussianJob(name, directory);
-							successFlag = gaussianJob.run();
+							name = name+".com"+j;
+							String directory = qmfolder;
+							File dir=new File(directory);
+							directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+							QMJobRunnable job = new MM4HRJob(name, directory);
+							job.run();
 						}
-						else if (qmprogram.equals("mopac") || qmprogram.equals("both")){
-							maxAttemptNumber = createMopacPM3Input(name, directory, p_3dfile, attemptNumber, InChIaug, multiplicity);
-							/*
-							 * name and directory are the name and directory for the input (and output) file;
-							 * input is assumed to be preexisting and have the .mop suffix
-							 * returns an integer indicating success or failure of the MOPAC calculation: 1 for success, 0 for failure;
-							 * this function is based on the Gaussian analogue
-							 */
-							QMJobRunnable job = new MOPACJob(name, directory); 
-							successFlag = job.run();
+					}
+				}
+				else if(successFlag==0){
+					if(attemptNumber==maxAttemptNumber){//if this is the last possible attempt, and the calculation fails, exit with an error message
+						if(qmprogram.equals("both")){ //if we are running with "both" option and all keywords fail, try with Gaussian
+							qmprogram = "gaussian03";
+							Logger.info("*****Final MOPAC attempt (#" + maxAttemptNumber + ") on species " + name + " ("+InChIaug+") failed. Trying to use Gaussian.");
+							attemptNumber=0;//this needs to be 0 so that when we increment attemptNumber below, it becomes 1 when returning to the beginning of the for loop
+							maxAttemptNumber=1;
 						}
 						else{
-							Logger.critical("Unsupported quantum chemistry program");
+							Logger.info("*****Final attempt (#" + maxAttemptNumber + ") on species " + name + " ("+InChIaug+") failed.");
+							Logger.critical(p_chemGraph.toString());
 							System.exit(0);
-						}
-						//new IF block to check success
-						if(successFlag==1){
-							Logger.info("Attempt #"+attemptNumber + " on species " + name + " ("+InChIaug+") succeeded.");
-						}
-						else if(successFlag==0){
-							if(attemptNumber==maxAttemptNumber){//if this is the last possible attempt, and the calculation fails, exit with an error message
-								if(qmprogram.equals("both")){ //if we are running with "both" option and all keywords fail, try with Gaussian
-									qmprogram = "gaussian03";
-									Logger.info("*****Final MOPAC attempt (#" + maxAttemptNumber + ") on species " + name + " ("+InChIaug+") failed. Trying to use Gaussian.");
-									attemptNumber=0;//this needs to be 0 so that when we increment attemptNumber below, it becomes 1 when returning to the beginning of the for loop
-									maxAttemptNumber=1;
-								}
-								else{
-									Logger.info("*****Final attempt (#" + maxAttemptNumber + ") on species " + name + " ("+InChIaug+") failed.");
-									Logger.critical(p_chemGraph.toString());
-									System.exit(0);
-									//	ThermoData temp = new ThermoData(1000,0,0,0,0,0,0,0,0,0,0,0,"failed calculation");
-									//	temp.setSource("***failed calculation***");
-									//	return temp;
-								}
-							}
-							Logger.info("*****Attempt #"+attemptNumber + " on species " + name + " ("+InChIaug+") failed. Will attempt a new keyword.");
-							attemptNumber++;//try again with new keyword
+							//	ThermoData temp = new ThermoData(1000,0,0,0,0,0,0,0,0,0,0,0,"failed calculation");
+							//	temp.setSource("***failed calculation***");
+							//	return temp;
 						}
 					}
-
-
+					Logger.info("*****Attempt #"+attemptNumber + " on species " + name + " ("+InChIaug+") failed. Will attempt a new keyword.");
+					attemptNumber++;//try again with new keyword
 				}
-				/*
-				 * 5. parse QM output and record as thermo data (function includes symmetry/point group calcs,
-				 *  etc.); if both Gaussian and MOPAC results exist, Gaussian result is used
-				 */
-				
-				result = parseOutput(name, directory, p_chemGraph);
-
 			}
-			else{//mm4 case
-				/*
-				 * if a successful result doesn't exist from previous run (or from this run),
-				 *  run the calculation; if a successful result exists, we will skip directly to 
-				 *  parsing the file
-				 */
-				if(!verifier.isMM4ResultExists()){
-					//3. create the MM4 input file
-					directory = qmfolder;
-					dir=new File(directory);
-					directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
-					int attemptNumber=1;//counter for attempts using different keywords
-					int successFlag=0;//flag for success of MM4 run; 0 means it failed, 1 means it succeeded
-					int maxAttemptNumber=1;
-					int multiplicity = p_chemGraph.getRadicalNumber()+1; //multiplicity = radical number + 1
-					while(successFlag==0 && attemptNumber <= maxAttemptNumber){
-						maxAttemptNumber = createMM4Input(name, directory, p_3dfile, attemptNumber, InChIaug, multiplicity);
-						//4. run MM4
-						//name and directory are the name and directory for the input (and output) file;
-						//input script is assumed to be preexisting and have the .com suffix
-						//returns an integer indicating success or failure of the calculation: 1 for success, 0 for failure
-						QMJobRunnable mm4Job = new MM4Job(name, directory);
-						successFlag = mm4Job.run();
-						//new IF block to check success
-						if(successFlag==1){
-							Logger.info("Attempt #"+attemptNumber + " on species " + name + " ("+InChIaug+") succeeded.");
-							//run rotor calculations if necessary
-							int rotors = p_chemGraph.getInternalRotor();
-							if(useHindRot && rotors > 0){
-								//we should re-run scans even if pre-existing scans exist because atom numbering may change from case to case; a better solution would be to check for stored CanTherm output and use that if available
-								Logger.info("Running rotor scans on "+name+"...");
-								dihedralMinima = createMM4RotorInput(name, directory, p_chemGraph, rotors);//we don't worry about checking InChI here; if there is an InChI mismatch it should be caught
-								//name and directory are the name and directory for the input (and output) file;
-								//input script is assumed to be preexisting and have the .comi suffix where i is a number between 1 and rotors
-								for(int j=1;j<=rotors;j++){
-
-									/**
-									 * TODO for now, name for MM4HR job also contains some 
-									 * input file extension and index j...
-									 * 
-									 * should be modified in the future!
-									 */
-									name = name+".com"+j;
-									QMJobRunnable job = new MM4HRJob(name, directory);
-									job.run();
-								}
-							}
-						}
-						else if(successFlag==0){
-							if(attemptNumber==maxAttemptNumber){//if this is the last possible attempt, and the calculation fails, exit with an error message
-								Logger.info("*****Final attempt (#" + maxAttemptNumber + ") on species " + name + " ("+InChIaug+") failed.");
-								Logger.critical(p_chemGraph.toString());
-								System.exit(0);
-								//	ThermoData temp = new ThermoData(1000,0,0,0,0,0,0,0,0,0,0,0,"failed calculation");
-								//	temp.setSource("***failed calculation***");
-								//	return temp;
-							}
-							Logger.info("*****Attempt #"+attemptNumber + " on species " + name + " ("+InChIaug+") failed. Will attempt a new keyword.");
-							attemptNumber++;//try again with new keyword
-						}
-					}
-					if(useCanTherm){
-						performCanThermCalcs(name, directory, p_chemGraph, dihedralMinima, false);
-						if (p_chemGraph.getInternalRotor()>0) performCanThermCalcs(name, directory, p_chemGraph, dihedralMinima, true);//calculate RRHO case for comparison
-					}
-				}
-				
+			if(qmprogram.equals("mm4hr") && useCanTherm){
+				performCanThermCalcs(name, p_chemGraph, dihedralMinima, false);
+				if (p_chemGraph.getInternalRotor()>0) performCanThermCalcs(name, p_chemGraph, dihedralMinima, true);//calculate RRHO case for comparison
 			}
+			/*
+			 * 5. parse QM output and record as thermo data (function includes symmetry/point group calcs,
+			 *  etc.); if both Gaussian and MOPAC results exist, Gaussian result is used
+			 */
 
+			result = parseOutput(name, p_chemGraph);
 			return result;
 		}
-		
-		
+
+
+	}
+	private int runQM(String name) {
+		String directory = qmfolder;
+		File dir=new File(directory);
+		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+		QMJobRunnable job;
+		if (qmprogram.equals("gaussian03")){
+			if(qmMethod.equals("pm3")){
+				//4. run Gaussian
+				/*
+				 * name and directory are the name and directory for the input (and output) file;
+				 * input is assumed to be preexisting and have the .gjf suffix
+				 * returns an integer indicating success or failure of the Gaussian calculation: 1 for success, 0 for failure;
+				 */
+				job = new GaussianJob(name, directory);
+				return job.run();
+			}
+
+		}
+
+		else if(qmprogram.equals("mopac") || qmprogram.equals("both")){
+			/*
+			 * name and directory are the name and directory for the input (and output) file;
+			 * input is assumed to be preexisting and have the .mop suffix
+			 * returns an integer indicating success or failure of the MOPAC calculation: 1 for success, 0 for failure;
+			 * this function is based on the Gaussian analogue
+			 */
+			job = new MOPACJob(name, directory); 
+			return job.run();
+		}
+		else if(qmprogram.equals("mm4") || qmprogram.equals("mm4hr")){
+			//4. run MM4
+			//name and directory are the name and directory for the input (and output) file;
+			//input script is assumed to be preexisting and have the .com suffix
+			//returns an integer indicating success or failure of the calculation: 1 for success, 0 for failure
+			job = new MM4Job(name, directory);
+			return job.run();
+		}
+		else{
+			Logger.critical("Unsupported quantum chemistry program");
+			System.exit(0);
+		}
+		return -1;
+
+	}
+	private void createQMInput(String name, ChemGraph p_chemGraph, molFile p_3dfile, int attemptNumber,
+			String inChIaug, int multiplicity) {
+		//3. create the Gaussian or MOPAC input file
+		String directory = qmfolder;
+		File dir=new File(directory);
+		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+		QMInputWritable writer;
+		File inputFile;
+
+		if (qmprogram.equals("gaussian03")){
+			if(qmMethod.equals("pm3")){
+				/**
+				 *creates Gaussian PM3 input file in directory with filename name.gjf by using OpenBabel
+				 * to convert p_molfile
+				 *@param attemptNumber determines which keywords to try
+				 *@return the function returns the maximum number of keywords that can be attempted; 
+				 *this will be the same throughout the evaluation of the code, 
+				 *so it may be more appropriate to have this as a "constant" attribute of some sort
+				 *attemptNumber=-1 will call a special set of keywords for the monoatomic case     
+				 */
+				if(p_chemGraph.getAtomNumber() > 1){
+					//write a file with the input keywords
+					writer = new GaussianPM3InputWriter(name, directory, p_3dfile, attemptNumber, multiplicity, inChIaug);
+
+					inputFile = writer.write();
+				}
+				//use -1 for attemptNumber for monoatomic case
+				else{
+					//write a file with the input keywords
+					writer = new GaussianPM3InputWriter(name, directory, p_3dfile, -1, multiplicity, inChIaug);
+					inputFile = writer.write();
+
+				}
+			}
+		}
+		/**
+		 * creates MOPAC PM3 input file in directory with filename name.mop by using OpenBabel to convert p_molfile
+		 * attemptNumber determines which keywords to try
+		 * the function returns the maximum number of keywords that can be attempted; this will be the same throughout the evaluation of the code, so it may be more appropriate to have this as a "constant" attribute of some sort
+		 * unlike createGaussianPM3 input, this requires an additional input specifying the spin multiplicity (radical number + 1) for the species
+		 * @param name
+		 * @param directory
+		 * @param p_molfile
+		 * @param attemptNumber
+		 * @param InChIaug
+		 * @param multiplicity
+		 * @return
+		 */
+		else if(qmprogram.equals("mopac") || qmprogram.equals("both")){
+			//write a file with the input keywords
+			writer = new MOPACPM3InputWriter(name, directory, p_3dfile, attemptNumber, multiplicity);
+			inputFile = writer.write();
+		}
+		else if(qmprogram.equals("mm4") || qmprogram.equals("mm4hr")){
+			//write a file with the input keywords
+			writer = new MM4InputWriter(name, directory, p_3dfile, attemptNumber, multiplicity, inChIaug);
+
+			inputFile = writer.write();
+
+		}
+
+
 	}
 	public molFile generate3DCoords(ChemGraph p_chemGraph, String name) {
 		molFile p_3dfile;
@@ -501,14 +527,16 @@ public class QMTP implements GeneralGAPP {
 	}
 
 	/**
-	 * wrapper method for exte
+	 * wrapper method for parser types
 	 * @param name
-	 * @param directory
 	 * @param p_chemGraph
 	 * @return
 	 */
-	public ThermoData parseOutput(String name, String directory,
-			ChemGraph p_chemGraph) {
+	public ThermoData parseOutput(String name, ChemGraph p_chemGraph) {
+		String directory = qmfolder;
+		File dir=new File(directory);
+		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+
 		ThermoData result = null;
 		if(qmMethod.equals("pm3")){
 			if ((qmprogram.equals("gaussian03"))){
@@ -554,10 +582,10 @@ public class QMTP implements GeneralGAPP {
 				System.exit(0);
 			}
 		}
-		
-		
+
+
 		return result;
-		
+
 	}
 	protected static QMTP getINSTANCE() {
 		return INSTANCE;
@@ -571,43 +599,17 @@ public class QMTP implements GeneralGAPP {
 	}
 
 	/**
-	 *creates Gaussian PM3 input file in directory with filename name.gjf by using OpenBabel
-	 * to convert p_molfile
-	 *@param attemptNumber determines which keywords to try
-	 *@return the function returns the maximum number of keywords that can be attempted; 
-	 *this will be the same throughout the evaluation of the code, 
-	 *so it may be more appropriate to have this as a "constant" attribute of some sort
-	 *attemptNumber=-1 will call a special set of keywords for the monoatomic case     
-	 */
-	public int createGaussianPM3Input(String name, String directory, molFile p_molfile, int attemptNumber, String InChIaug, int multiplicity){
-		//write a file with the input keywords
-		QMInputWritable writer = new GaussianPM3InputWriter(name, directory, p_molfile, attemptNumber, multiplicity, InChIaug);
-
-		File inputFile = writer.write();
-
-		return QMInputWriter.maxAttemptNumber;
-	}
-
-	//creates MM4 input file and MM4 batch file in directory with filenames name.mm4 and name.com, respectively using MoleCoor
-	//attemptNumber determines which keywords to try
-	//the function returns the maximum number of keywords that can be attempted; this will be the same throughout the evaluation of the code, so it may be more appropriate to have this as a "constant" attribute of some sort
-	public int createMM4Input(String name, String directory, molFile p_molfile, int attemptNumber, String InChIaug, int multiplicity){
-		//write a file with the input keywords
-		QMInputWritable writer = new MM4InputWriter(name, directory, p_molfile, attemptNumber, multiplicity, InChIaug);
-
-		File inputFile = writer.write();
-
-		return QMInputWriter.maxAttemptNumber;
-	}
-
-
-	/**
 	 * creates MM4 rotor input file and MM4 batch file in directory 
 	 * with filenames name.mm4roti and name.comi, respectively
 	 * the function returns the set of rotor dihedral angles for 
 	 * the minimum energy conformation 
 	 */
-	public double[] createMM4RotorInput(String name, String directory, ChemGraph p_chemgraph, int rotors){
+	public double[] createMM4RotorInput(String name, ChemGraph p_chemgraph, int rotors){
+		String directory = qmfolder;
+		File dir=new File(directory);
+		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+
+		
 		/*
 		 * TODO should we include getter method of dihedral minima in interface QMInputWritable?
 		 * don't think so...
@@ -619,33 +621,14 @@ public class QMTP implements GeneralGAPP {
 		return writer.getDihedralMinima();
 	}
 
-	/**
-	 * creates MOPAC PM3 input file in directory with filename name.mop by using OpenBabel to convert p_molfile
-	 * attemptNumber determines which keywords to try
-	 * the function returns the maximum number of keywords that can be attempted; this will be the same throughout the evaluation of the code, so it may be more appropriate to have this as a "constant" attribute of some sort
-	 * unlike createGaussianPM3 input, this requires an additional input specifying the spin multiplicity (radical number + 1) for the species
-	 * @param name
-	 * @param directory
-	 * @param p_molfile
-	 * @param attemptNumber
-	 * @param InChIaug
-	 * @param multiplicity
-	 * @return
-	 */
-	public int createMopacPM3Input(String name, String directory, molFile p_molfile, int attemptNumber, String InChIaug, int multiplicity){
-		//write a file with the input keywords
-
-		QMInputWritable writer = new MOPACPM3InputWriter(name, directory, p_molfile, attemptNumber, multiplicity);
-		File inputFile = writer.write();
-
-		return QMInputWriter.maxAttemptNumber;
-
-	}
-
-
 	//parse the results using cclib and CanTherm and return a ThermoData object; name and directory indicate the location of the MM4 .mm4out file
 	//formerly known as parseMM4withForceMat
-	public IQMData performCanThermCalcs(String name, String directory, ChemGraph p_chemGraph, double[] dihedralMinima, boolean forceRRHO){
+	public IQMData performCanThermCalcs(String name, ChemGraph p_chemGraph, double[] dihedralMinima, boolean forceRRHO){
+		String directory = qmfolder;
+		File dir=new File(directory);
+		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+
+		
 		// parse the MM4 file with cclib to get atomic number vector and geometry
 		QMParser parser = new MM4Parser(name, directory, p_chemGraph, true);
 

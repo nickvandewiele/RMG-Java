@@ -13,6 +13,7 @@ public class MM4HRJob extends QMJob implements QMJobRunnable {
 
 	public MM4HRJob(String name, String directory) {
 		super(name, directory);
+		
 
 		inputFileExtension = ".com";
 		outputFileExtension = "";
