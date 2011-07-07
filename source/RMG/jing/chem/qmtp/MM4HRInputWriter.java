@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import jing.chem.ChemGraph;
-import jing.chem.QMTP;
 import jing.chem.molFile;
 import jing.rxnSys.Logger;
 
@@ -28,6 +27,9 @@ public class MM4HRInputWriter extends QMInputWriter implements QMInputWritable {
 	String mm4optContents;
 	
 	double[] dihedralMinima;
+
+	public static double deltaTheta=5.0;//degree increment for rotor scans when using useHindRot
+	// Constructors
 	
 	private class MM4HRKEYWORDS{
 		public static final String INPUT = "Input";
@@ -234,7 +236,7 @@ public class MM4HRInputWriter extends QMInputWriter implements QMInputWritable {
 				 * //this would require miminum to be stored and used to adjust 
 				 * actual angles before sending to CanTherm
 				 */
-				mm4roti.write(mm4optContents+String.format("  %3d  %3d  %3d  %3d     %5.1f%5.1f%5.1f", rotorAtoms[0],rotorAtoms[1],rotorAtoms[2],rotorAtoms[3], 0.0, 360.0-QMTP.deltaTheta, QMTP.deltaTheta)+"\n");
+				mm4roti.write(mm4optContents+String.format("  %3d  %3d  %3d  %3d     %5.1f%5.1f%5.1f", rotorAtoms[0],rotorAtoms[1],rotorAtoms[2],rotorAtoms[3], 0.0, 360.0-MM4HRInputWriter.deltaTheta, MM4HRInputWriter.deltaTheta)+"\n");
 				mm4roti.close();
 			}
 			catch(Exception e){

@@ -95,9 +95,6 @@ public class QMTP implements GeneralGAPP {
 	public static boolean usePolar = false; //use polar keyword in MOPAC
 	public static boolean useCanTherm = true; //whether to use CanTherm in MM4 cases for interpreting output via force-constant matrix; this will hopefully avoid zero frequency issues
 	public static boolean useHindRot = false;//whether to use HinderedRotor scans with MM4 (requires useCanTherm=true)
-	public static double deltaTheta=5.0;//degree increment for rotor scans when using useHindRot
-	// Constructors
-
 	//## operation QMTP()
 	private QMTP() {
 		/*
@@ -397,8 +394,8 @@ public class QMTP implements GeneralGAPP {
 				}
 			}
 			if(qmprogram.equals("mm4hr") && useCanTherm){
-				performCanThermCalcs(name, p_chemGraph, dihedralMinima, false);
-				if (p_chemGraph.getInternalRotor()>0) performCanThermCalcs(name, p_chemGraph, dihedralMinima, true);//calculate RRHO case for comparison
+				performCanThermCalcs(name, p_chemGraph, dihedralMinima);
+				if (p_chemGraph.getInternalRotor()>0) performCanThermCalcs(name, p_chemGraph, dihedralMinima);//calculate RRHO case for comparison
 			}
 			/*
 			 * 5. parse QM output and record as thermo data (function includes symmetry/point group calcs,
@@ -623,7 +620,7 @@ public class QMTP implements GeneralGAPP {
 
 	//parse the results using cclib and CanTherm and return a ThermoData object; name and directory indicate the location of the MM4 .mm4out file
 	//formerly known as parseMM4withForceMat
-	public IQMData performCanThermCalcs(String name, ChemGraph p_chemGraph, double[] dihedralMinima, boolean forceRRHO){
+	public IQMData performCanThermCalcs(String name, ChemGraph p_chemGraph, double[] dihedralMinima){
 		String directory = qmfolder;
 		File dir=new File(directory);
 		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
@@ -640,7 +637,8 @@ public class QMTP implements GeneralGAPP {
 
 		IQMData qmdata = parser.getQMData();
 		//unpack the needed results and write cantherm input file
-		QMInputWritable canthermWriter = new CanThermInputWriter(name, directory, p_chemGraph, qmdata, dihedralMinima, forceRRHO);
+		//flag RRHO = true
+		QMInputWritable canthermWriter = new CanThermInputWriter(name, directory, p_chemGraph, qmdata, dihedralMinima, true);
 		File canThermFile = canthermWriter.write();
 
 		// call CanTherm 
