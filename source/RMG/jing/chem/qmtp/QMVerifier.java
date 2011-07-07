@@ -8,8 +8,9 @@ import jing.chem.QMTP;
 import jing.rxnSys.Logger;
 
 /**
- * Verifies whether a QM job (externalized) has succesfully completed by 
- * searching for specific keywords in the output files
+ * Verifies whether a QM job (externalized) was succesfully completed by 
+ * searching for specific keywords in the output files, 
+ * located in a specific directory (e.g. "QMFiles")
  * @author nmvdewie
  *
  */
@@ -20,6 +21,12 @@ public class QMVerifier {
 	String directory;
 	
 	String InChIaug;
+	
+	boolean gaussianResultExists;
+	
+	boolean mopacResultExists;
+	
+	boolean mm4ResultExists;
 	
 	public QMVerifier(String name, String directory, String InChIaug){
 		this.name = name;
@@ -411,5 +418,34 @@ public class QMVerifier {
 		}
 		//we could print a line here for cases where the file doesn't exist, but this would probably be too verbose
 		return false;
+	}
+
+	/**
+	 * Depending on the QM method used, a specific verification method will be called,
+	 * and assigns the correct flag stored as an attribute.
+	 */
+	public void verify() {
+		if(QMTP.qmMethod.equals("pm3")){
+			//first, check to see if the result already exists and the job terminated successfully
+			gaussianResultExists  = successfulGaussianResultExistsQ();
+			mopacResultExists = successfulMopacResultExistsQ();
+		}
+		else if(QMTP.qmMethod.equals("mm4") || QMTP.qmMethod.equals("mm4hr")){
+			//first, check to see if the result already exists and the job terminated successfully
+			mm4ResultExists = successfulMM4ResultExistsQ();
+		}
+		
+	}
+
+	public boolean isGaussianResultExists() {
+		return gaussianResultExists;
+	}
+
+	public boolean isMopacResultExists() {
+		return mopacResultExists;
+	}
+
+	public boolean isMM4ResultExists() {
+		return mm4ResultExists;
 	}
 }

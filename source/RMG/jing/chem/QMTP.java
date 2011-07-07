@@ -109,6 +109,23 @@ public class QMTP implements GeneralGAPP {
 
 	//## operation QMTP()
 	private QMTP() {
+		/*
+		 * set global attribute qmMethod
+		 * 
+		 * Right now, not many choices are available.
+		 */
+		if(qmprogram.equals("mm4")||qmprogram.equals("mm4hr")){
+			qmMethod = "mm4";
+			if(qmprogram.equals("mm4hr")) {
+				qmMethod = "mm4hr";
+				useHindRot=true;
+			}
+		}
+		else{
+			 //may eventually want to pass this to various functions to choose which "sub-function" to call
+			qmMethod="pm3";
+		}
+
 		// initializeLibrary(); //gmagoon 72509: commented out in GATP, so I am mirroring the change here; other library functions below also commented out
 		initializePrimaryThermoLibrary();
 	}
@@ -275,18 +292,7 @@ public class QMTP implements GeneralGAPP {
 	 */
 	public ThermoData generateQMThermoData(ChemGraph p_chemGraph){
 		
-
-		if(qmprogram.equals("mm4")||qmprogram.equals("mm4hr")){
-			qmMethod = "mm4";
-			if(qmprogram.equals("mm4hr")) {
-				qmMethod = "mm4hr";
-				useHindRot=true;
-			}
-		}
-		else{
-			qmMethod="pm3"; //may eventually want to pass this to various functions to choose which "sub-function" to call
-		}
-
+		
 		ThermoData result = new ThermoData();
 		double[] dihedralMinima = null;
 
@@ -296,12 +302,21 @@ public class QMTP implements GeneralGAPP {
 		String directory = qmfolder;
 		File dir=new File(directory);
 		directory = dir.getAbsolutePath();//this and previous three lines get the absolute path for the directory
+		
+		/*
+		 * verify whether a succesful QM results exists for this particular species:
+		 */
 		QMVerifier verifier = new QMVerifier(name, directory, InChIaug);
+		verifier.verify();
+		
 		if(qmMethod.equals("pm3")){
-			//first, check to see if the result already exists and the job terminated successfully
-			boolean gaussianResultExists  = verifier.successfulGaussianResultExistsQ();
-			boolean mopacResultExists = verifier.successfulMopacResultExistsQ();
-			if(!gaussianResultExists && !mopacResultExists){//if a successful result doesn't exist from previous run (or from this run), run the calculation; if a successful result exists, we will skip directly to parsing the file
+			
+			/*
+			 * if a successful result doesn't exist from previous run (or from this run), 
+			 * run the calculation; if a successful result exists, we will skip directly to 
+			 * parsing the file
+			 */
+			if(!verifier.isGaussianResultExists() && !verifier.isMopacResultExists()){
 				//steps 1 and 2: create 2D and 3D mole files
 				ThreeDMolFileCreator creator = new ThreeDMolFileCreator(name, p_chemGraph);
 				molFile p_3dfile = creator.create();
@@ -375,7 +390,7 @@ public class QMTP implements GeneralGAPP {
 
 			}
 			//5. parse QM output and record as thermo data (function includes symmetry/point group calcs, etc.); if both Gaussian and MOPAC results exist, Gaussian result is used
-			if (gaussianResultExists || (qmprogram.equals("gaussian03") && !mopacResultExists)){
+			if (verifier.isGaussianResultExists() || (qmprogram.equals("gaussian03") && !verifier.isMopacResultExists())){
 				//parse the results using cclib and return a ThermoData object; name and directory indicate the location of the Gaussian .log file
 				//may want to split this into several functions
 				QMParsable parser = new GaussianPM3Parser(name, directory, p_chemGraph);
@@ -384,7 +399,7 @@ public class QMTP implements GeneralGAPP {
 				Logger.info("Thermo for " + name + ": "+ result.toString());//print result, at least for debugging purposes
 
 			}
-			else if (mopacResultExists || qmprogram.equals("mopac") || qmprogram.equals("both")){
+			else if (verifier.isMopacResultExists() || qmprogram.equals("mopac") || qmprogram.equals("both")){
 				result = parseMopacPM3(name, directory, p_chemGraph);
 			}
 			else{
@@ -393,9 +408,12 @@ public class QMTP implements GeneralGAPP {
 			}
 		}
 		else{//mm4 case
-			//first, check to see if the result already exists and the job terminated successfully
-			boolean mm4ResultExists = verifier.successfulMM4ResultExistsQ();
-			if(!mm4ResultExists){//if a successful result doesn't exist from previous run (or from this run), run the calculation; if a successful result exists, we will skip directly to parsing the file
+			/*
+			 * if a successful result doesn't exist from previous run (or from this run),
+			 *  run the calculation; if a successful result exists, we will skip directly to 
+			 *  parsing the file
+			 */
+			if(!verifier.isMM4ResultExists()){
 				//steps 1 and 2: create 2D and 3D mole files
 				ThreeDMolFileCreator creator = new ThreeDMolFileCreator(name, p_chemGraph);
 				molFile p_3dfile = creator.create();
