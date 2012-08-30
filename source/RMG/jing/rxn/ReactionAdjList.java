@@ -33,9 +33,8 @@ package jing.rxn;
 import jing.chem.*;
 
 import java.util.*;
+
 import jing.chemUtil.*;
-import jing.chemUtil.Arc;
-import jing.chemUtil.Graph;
 import jing.param.Global;
 import jing.rxnSys.Logger;
 
@@ -392,14 +391,101 @@ public class ReactionAdjList {
 		
 			
         }
+        
+        LinkedList correctedProducts = new LinkedList();
+        /**
+         * Identify 1,2 biradicals and convert them to alkenes
+         */
+        for (Iterator iter = products.iterator(); iter.hasNext(); ) {
+        	ChemGraph pcg = (ChemGraph)iter.next();
+        	pcg = modify12Biradicals(pcg);
+        	correctedProducts.add(pcg);
+        }
+        
 		Global.RT_reactChemGraph += (System.currentTimeMillis()-pT)/1000/60;
-        return products;
+        return correctedProducts;
         
         
         //#]
     }
     
-    //## operation reactFunctionalGroup(LinkedList) 
+    /**
+     * Searches for 1,2-biradical chemgraphs and alters them to alkenes by:
+     * - removing the unpaired electrons
+     * - replacing the single bond with a double bond
+     * <BR>
+     * The identification of 1,2 biradicals happens as follows:
+     * - iterate over all nodes and identify the radical nodes
+     * - check whether two radical nodes have a bond in common 
+     * @param pcg
+     * @return the altered chemgraph
+     */
+    private ChemGraph modify12Biradicals(ChemGraph pcg) {
+    	//only look for biradicals:
+    	/*
+    	 * TODO will fail for carbene type compounds 
+    	 * getRadicalNumber is culprit
+    	 */
+		if (pcg.getRadicalNumber() < 2) return pcg;
+		else{
+			//store the nodes that have a radical:
+			List<Node> radicalNodes = new LinkedList<Node>();
+			Iterator iter = pcg.getNodeList();
+			while (iter.hasNext()) {
+				Node node = (Node)iter.next();
+	           	Atom atom = (Atom)node.getElement();
+	           	if (atom.isRadical()) {
+	           		radicalNodes.add(node);
+
+	           	}
+			}
+
+       		if (radicalNodes.size() != 2) return pcg;
+       		else {
+       			Arc arc = pcg.getGraph().getArcBetween(radicalNodes.get(0),radicalNodes.get(1));
+       			if (arc == null){//it is not a 1,2-biradical
+       				return pcg;
+       			}
+       			else{//it IS a 1,2-biradical
+       				//get order of bond:
+       				Bond bond = (Bond)arc.getElement();
+       				if (bond.getOrder() != 1){//only touch single bonds for now:
+       					return pcg;
+       				}
+       				else{
+       					//change the order of the bond to 2: 
+       					Bond b = ((Bond)bond).changeBond(1);//single bond + 1
+    		        	arc.setElement(b);
+    		        	
+    		        	//set order of free electrons to 0
+    		        	FreeElectron noElectron = FreeElectron.make("0");
+    		        	
+    		        	//node 0: 
+    		        	Atom atom0 = (Atom)radicalNodes.get(0).getElement();
+    		        	Atom newAtom0 = Atom.make(atom0.getChemElement(),noElectron);
+    		        	radicalNodes.get(0).setElement(newAtom0);
+    		        	radicalNodes.get(0).updateFeElement();
+    		        	
+    		        	//node 1: 
+    		        	Atom atom1 = (Atom)radicalNodes.get(1).getElement();
+    		        	Atom newAtom1 = Atom.make(atom1.getChemElement(),noElectron);
+    		        	radicalNodes.get(1).setElement(newAtom1);
+    		        	radicalNodes.get(1).updateFeElement();
+    		        	
+       				}
+       			}
+       		}
+
+       		//update to reflect atom changes in chemgraph
+			for(Node radNode : radicalNodes){
+				radNode.updateFeElement();
+				radNode.updateFgElement();
+			}
+		}
+		
+		return pcg;
+	}
+	//## operation reactFunctionalGroup(LinkedList) 
     public LinkedList reactFunctionalGroup(LinkedList p_reactants) {
         //#[ operation reactFunctionalGroup(LinkedList) 
         if (p_reactants.size() != reactantNumber) {
