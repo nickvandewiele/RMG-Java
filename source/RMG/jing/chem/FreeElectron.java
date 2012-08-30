@@ -188,6 +188,18 @@ public class FreeElectron {
         return name;
     }
     
+    /**
+     * Sets the order of the Free electron to the integer value in 
+     * the argument.
+     * 
+     * TODO Currently, it does not check whether the passed-in integer
+     * makes sense or not!
+     * @param i
+     */
+	public void setOrder(int i) {
+		order = i;
+	}
+    
 }
 /*********************************************************************
 	File Path	: RMG\RMG\jing\chem\FreeElectron.java
